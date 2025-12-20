@@ -42,7 +42,7 @@ def run_pipeline(
     """
 
     # --------------------------------------------------
-    # Stage 1: NL → IR
+    # Stage 1: NL --> IR
     # --------------------------------------------------
     ir_model = nl_to_ir(prompt)
 
@@ -53,7 +53,7 @@ def run_pipeline(
     validate_ir(ir_model)
 
     # --------------------------------------------------
-    # Stage 2: IR → IRL
+    # Stage 2: IR --> IRL
     # --------------------------------------------------
     irl_model = lower_ir_to_irl(ir_model)
 
@@ -65,7 +65,7 @@ def run_pipeline(
     validate_irl(irl_model)
 
     # --------------------------------------------------
-    # Stage 3: IRL → CAD kernel
+    # Stage 3: IRL --> CAD kernel
     # --------------------------------------------------
     executor = IRLExecutor()
     executor.execute(irl_model)
