@@ -3,7 +3,7 @@ IR --> IRL lowering pass
 =====================
 
 Purpose:
-- Convert high level IR into kernel grade IRL
+- Convert high level IR into kernel     grade IRL
 - Assign explicit body identities
 - Make feature semantics explicit
 - Eliminate all implicit CAD state
@@ -27,6 +27,8 @@ from lexica.irl.contract import (
     BooleanKind,
     TopoPredicate,
 )
+from lexica.pipeline.nl_to_ir.schema import IROpKind
+
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -58,60 +60,105 @@ def lower_ir_to_irl(ir_model) -> IRLModel:
     """
     Lower IR model to IRL model.
 
-    IR assumptions (important):
-    - IR expresses intent, not execution
-    - IR may reference bodies implicitly
+    IR v0 semantics:
+    - IR has NO op_id
+    - IR has NO body identity
+    - Bodies are implicit and sequential
+    - Boolean ops operate on:
+        - current solid body (LHS)
+        - most recent tool body (RHS)
     """
 
     body_ids = BodyIDGenerator()
     ops: List = []
 
-    # Tracks the "current" body at IR level ONLY
-    # This does NOT survive into IRL
+    # Main solid being built
     current_body = None
 
-    for ir_op in ir_model.ops:
+    # Most recently created tool body (for booleans)
+    last_tool_body = None
+
+    for idx, ir_op in enumerate(ir_model.ops):
         kind = ir_op.kind
+        op_id = f"{kind.value}_{idx}"
 
         # --------------------------------------------------
-        # Primitive creation
+        # Primitive
         # --------------------------------------------------
-        if kind == "primitive":
-            body_id = body_ids.new(ir_op.primitive_kind)
+        if kind == IROpKind.PRIMITIVE:
+            body_id = body_ids.new(ir_op.primitive_kind.value)
 
             ops.append(
                 PrimitiveOp(
-                    op_id=ir_op.op_id,
+                    op_id=op_id,
                     reads=[],
                     writes=body_id,
                     params={
-                        "kind": ir_op.primitive_kind,
+                        "kind": ir_op.primitive_kind.value,
                         **ir_op.params,
                     },
                 )
             )
 
-            current_body = body_id
+            # First primitive becomes the main body,
+            # subsequent primitives are tool bodies
+            if current_body is None:
+                current_body = body_id
+            else:
+                last_tool_body = body_id
+
             continue
 
         # --------------------------------------------------
-        # Feature operations (fillet, chamfer, etc.)
+        # Transform (translate / rotate)
         # --------------------------------------------------
-        if kind == "feature":
-            if current_body is None:
-                raise LoweringError(
-                    f"Feature '{ir_op.op_id}' has no target body"
+        if kind == IROpKind.TRANSFORM:
+            if last_tool_body is not None:
+                target = last_tool_body
+            elif current_body is not None:
+                target = current_body
+            else:
+                raise LoweringError("Transform op has no target body")
+
+            new_body = body_ids.new("xf")
+
+            ops.append(
+                FeatureOp(
+                    op_id=op_id,
+                    reads=[target],
+                    writes=new_body,
+                    params={
+                        "kind": ir_op.transform_kind.value,
+                        **ir_op.params,
+                    },
+                    topo=None,
                 )
+            )
+
+            # Preserve whether this was a tool or the main body
+            if target == current_body:
+                current_body = new_body
+            else:
+                last_tool_body = new_body
+
+            continue
+
+        # --------------------------------------------------
+        # Feature (fillet / chamfer)
+        # --------------------------------------------------
+        if kind == IROpKind.FEATURE:
+            if current_body is None:
+                raise LoweringError("Feature op has no target body")
 
             new_body = body_ids.new("feat")
 
             ops.append(
                 FeatureOp(
-                    op_id=ir_op.op_id,
+                    op_id=op_id,
                     reads=[current_body],
                     writes=new_body,
                     params={
-                        "kind": ir_op.feature_kind,
+                        "kind": ir_op.feature_kind.value,
                         **ir_op.params,
                     },
                     topo=_lower_topology(ir_op),
@@ -122,36 +169,39 @@ def lower_ir_to_irl(ir_model) -> IRLModel:
             continue
 
         # --------------------------------------------------
-        # Boolean operations
+        # Boolean (implicit operands)
         # --------------------------------------------------
-        if kind == "boolean":
-            if len(ir_op.operands) < 2:
-                raise LoweringError("Boolean op requires >= 2 operands")
+        if kind == IROpKind.BOOLEAN:
+            if current_body is None or last_tool_body is None:
+                raise LoweringError(
+                    "Boolean op requires a current body and a tool body"
+                )
 
             result_body = body_ids.new("bool")
 
             ops.append(
                 BooleanOp(
-                    op_id=ir_op.op_id,
-                    reads=list(ir_op.operands),
+                    op_id=op_id,
+                    reads=[current_body, last_tool_body],
                     writes=result_body,
-                    kind=BooleanKind(ir_op.boolean_kind),
+                    kind=BooleanKind(ir_op.boolean_kind.value),
                 )
             )
 
             current_body = result_body
+            last_tool_body = None
             continue
 
         # --------------------------------------------------
         # Export
         # --------------------------------------------------
-        if kind == "export":
+        if kind == IROpKind.EXPORT:
             if current_body is None:
-                raise LoweringError("Export has no body to export")
+                raise LoweringError("Export op has no body to export")
 
             ops.append(
                 ExportOp(
-                    op_id=ir_op.op_id,
+                    op_id=op_id,
                     reads=[current_body],
                     writes=None,
                     params={

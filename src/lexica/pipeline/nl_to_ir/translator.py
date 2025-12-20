@@ -99,14 +99,58 @@ def nl_to_ir(prompt: str, *, debug: bool = False) -> IRModel:
 # LLM interaction (backend-agnostic)
 # ---------------------------------------------------------------------------
 
+# def call_llm(*, system_prompt: str, user_prompt: str) -> str:
+#     """
+#     Call the LLM and return raw text output.
+#     """
+
+#     raise NotImplementedError(
+#         "LLM backend not configured. Implement call_llm()."
+#     )
+
 def call_llm(*, system_prompt: str, user_prompt: str) -> str:
     """
-    Call the LLM and return raw text output.
+    Mock LLM backend for deterministic testing.
     """
 
-    raise NotImplementedError(
-        "LLM backend not configured. Implement call_llm()."
-    )
+    text = user_prompt.lower()
+
+    # Test case: box → translate → rotate → fillet → export
+    if "box" in text and "fillet" in text:
+        return """
+        {
+        "ops": [
+            {
+            "kind": "primitive",
+            "primitive_kind": "box",
+            "params": { "length": 40, "width": 30, "height": 20 }
+            },
+            {
+            "kind": "transform",
+            "transform_kind": "translate",
+            "params": { "dx": 25, "dy": 0, "dz": 0 }
+            },
+            {
+            "kind": "transform",
+            "transform_kind": "rotate",
+            "params": { "axis": "z", "angle_deg": 45 }
+            },
+            {
+            "kind": "feature",
+            "feature_kind": "fillet",
+            "params": { "radius": 2.5 },
+            "topology": { "target": "edge", "rule": "all" }
+            },
+            {
+            "kind": "export",
+            "format": "step",
+            "path": "mock_llm_output.step"
+            }
+        ]
+        }
+        """
+
+    raise RuntimeError("Mock LLM received unknown prompt")
 
 
 # ---------------------------------------------------------------------------

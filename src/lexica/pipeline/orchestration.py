@@ -72,3 +72,35 @@ def run_pipeline(
 
     if debug:
         print("[orchestration] Execution completed successfully")
+
+def run_irl_pipeline(
+    ir_model,
+    *,
+    debug: bool = False,
+):
+    """
+    IR-only pipeline:
+        IR --> IRL --> CAD --> STEP
+
+    Used for:
+    - kernel stress tests
+    - compiler-internal testing
+    """
+
+    validate_ir(ir_model)
+
+    irl_model = lower_ir_to_irl(ir_model)
+
+    if debug:
+        print("[orchestration] IRL model:")
+        for op in irl_model.ops:
+            print(op)
+
+    validate_irl(irl_model)
+
+    executor = IRLExecutor()
+    executor.execute(irl_model)
+
+    if debug:
+        print("[orchestration] IRL execution completed")
+
