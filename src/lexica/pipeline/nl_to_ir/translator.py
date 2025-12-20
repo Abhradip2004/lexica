@@ -1,4 +1,3 @@
-# translator.py
 from .schema import IR
 from .validate import validate_ir
 

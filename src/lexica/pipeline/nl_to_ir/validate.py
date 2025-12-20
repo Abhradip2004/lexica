@@ -1,4 +1,3 @@
-# validate.py
 from .schema import IR
 
 
