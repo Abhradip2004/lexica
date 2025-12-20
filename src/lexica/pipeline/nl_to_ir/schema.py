@@ -104,7 +104,7 @@ class IROp:
 
     The LLM always emits a flat sequence of these.
     """
-    kind: IROpKind
+    kind: IROpKind = field(init=False)
     params: Dict[str, Any] = field(default_factory=dict)
 
 
