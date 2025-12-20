@@ -34,8 +34,8 @@ def run_pipeline(
     debug: bool = False,
 ):
     """
-    Full gnoss pipeline:
-        NL → IR → IRL → CAD → STEP
+    Full Lexica pipeline:
+        NL --> IR --> IRL --> CAD --> STEP
 
     Returns:
         None (side effect: export ops write files)
