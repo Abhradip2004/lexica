@@ -3,4 +3,12 @@ github_ssh_key
 github_ssh_key.pub
 *.key
 *.pem
+*.igs
 
+__pycache__/
+*.pyc
+*.step
+*.stp
+*.iges
+.venv/
+venv/
