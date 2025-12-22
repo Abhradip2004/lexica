@@ -151,17 +151,24 @@ class IRLExecutor:
             raise ExecutorError(
                 f"Feature op '{op.op_id}' must declare a write body"
             )
-        # if op.topo is None:
-        #     raise ExecutorError(
-        #         f"Feature op '{op.op_id}' requires topo selection"
-        #     )
+
+        # Topology required for topo-dependent features
+        kind = op.params.get("kind")
+        if kind in ("fillet", "chamfer") and op.topo is None:
+            raise ExecutorError(
+                f"Feature op '{op.op_id}' of kind '{kind}' "
+                f"requires topology selection"
+            )
 
         self.registry.require_all(op.reads)
 
-        input_shape = self.registry.get(op.reads[0])
+        src_id = op.reads[0]
+        input_shape = self.registry.get(src_id)
         output_shape = execute_feature(op, input_shape)
 
-        # Explicit overwrite allowed
+        if op.overwrite:
+            del self.registry._bodies[src_id]
+
         self.registry.set(op.writes, output_shape)
 
     def _exec_boolean(self, op: BooleanOp) -> None:
@@ -178,6 +185,10 @@ class IRLExecutor:
 
         input_shapes = [self.registry.get(bid) for bid in op.reads]
         result_shape = execute_boolean(op, input_shapes)
+
+        # consume all input bodies
+        for bid in op.reads:
+            del self.registry._bodies[bid]
 
         self.registry.set(op.writes, result_shape)
 

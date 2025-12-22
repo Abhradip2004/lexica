@@ -64,22 +64,58 @@ def _validate_op_ids_unique(model: IRLModel) -> None:
 
 def _validate_body_flow(model: IRLModel) -> None:
     """
-    Ensure bodies are written before read and not implicitly created.
+    Enforce body lifecycle semantics:
+    - bodies must be LIVE before read
+    - overwrite features kill input bodies
+    - fork features preserve input bodies
+    - booleans consume all operands
     """
 
     live_bodies: Set[str] = set()
 
     for op in model.ops:
-        # Reads must exist
+        # --------------------------
+        # Reads must be LIVE
+        # --------------------------
         for body in op.reads:
             if body not in live_bodies:
                 raise IRLValidationError(
-                    f"Op '{op.op_id}' reads unknown body '{body}'"
+                    f"Op '{op.op_id}' reads DEAD or unknown body '{body}'"
                 )
 
-        # Writes introduce or replace a body
-        if op.writes is not None:
+        # --------------------------
+        # Primitive
+        # --------------------------
+        if isinstance(op, PrimitiveOp):
             live_bodies.add(op.writes)
+
+        # --------------------------
+        # Feature
+        # --------------------------
+        elif isinstance(op, FeatureOp):
+            src = op.reads[0]
+
+            if op.overwrite:
+                # kill source body
+                live_bodies.remove(src)
+
+            # new body always becomes live
+            live_bodies.add(op.writes)
+
+        # --------------------------
+        # Boolean
+        # --------------------------
+        elif isinstance(op, BooleanOp):
+            for body in op.reads:
+                live_bodies.remove(body)
+
+            live_bodies.add(op.writes)
+
+        # --------------------------
+        # Export
+        # --------------------------
+        elif isinstance(op, ExportOp):
+            pass
 
 
 def _validate_ops_semantics(model: IRLModel) -> None:

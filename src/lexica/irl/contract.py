@@ -1,3 +1,9 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Dict, List, Optional, Union, Literal, Any
+
 """
 IRL (Intermediate Representation) Contract
 ====================================================
@@ -14,12 +20,58 @@ Key guarantees:
 
 If an operation cannot be expressed here, it is NOT allowed in lexica.
 """
+"""
+Body Lifecycle Semantics (NON-NEGOTIABLE)
+=======================================
 
-from __future__ import annotations
+Lexica enforces explicit, deterministic body lifecycle rules.
 
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Dict, List, Optional, Union, Literal, Any
+Definitions
+-----------
+- A Body is an immutable topological solid identified by a BodyID.
+- Bodies are never mutated in-place.
+- Bodies are replaced by new bodies via operations.
+
+Lifecycle States
+----------------
+- LIVE:
+    - Body exists and may be read by operations.
+- DEAD:
+    - Body has been consumed or replaced.
+    - Reading a DEAD body is a hard error.
+
+Operation Semantics
+-------------------
+PrimitiveOp:
+    - Reads: none
+    - Writes: exactly one new LIVE body
+    - Does not kill any body
+
+FeatureOp:
+    - Reads: exactly one LIVE body
+    - Writes: exactly one body
+    - The input body is considered DEAD after the operation (replacement semantics)
+
+BooleanOp:
+    - Reads: >= 2 LIVE bodies
+    - Writes: exactly one body
+    - ALL input bodies become DEAD after the operation
+
+ExportOp:
+    - Reads: exactly one LIVE body
+    - Writes: none
+    - Does not modify lifecycle state
+
+Illegal States (Hard Errors)
+----------------------------
+- Reading a DEAD body
+- Reusing a consumed boolean operand
+- Exporting a DEAD body
+- Implicitly mutating bodies
+"""
+
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -136,12 +188,13 @@ class FeatureOp(IRLOp):
     Topological modification.
 
     Semantics:
-    - reads MUST contain exactly one body
-    - writes MAY:
-        - overwrite the same body (in-place semantic replacement)
-        - or create a new derived body
-    - topo MUST be provided (explicit target)
+    - reads MUST contain exactly one LIVE body
+    - writes MUST produce exactly one body
+    - overwrite=True  → input body is replaced (input becomes DEAD)
+    - overwrite=False → fork (input stays LIVE, new body created)
     """
+
+    overwrite: bool = True
 
     category: IRLOpCategory = field(
         default=IRLOpCategory.FEATURE, init=False

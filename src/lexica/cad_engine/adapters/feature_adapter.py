@@ -98,7 +98,7 @@ def _rotate(op: FeatureOp, shape):
 # Topology selection (Level 0)
 # ---------------------------
 
-def _select_edges(wp: cq.Workplane, topo: TopoPredicate):
+def _select_edges(wp: cq.Workplane, topo: TopoPredicate) -> cq.Workplane:
     if topo.target.value != "edge":
         raise FeatureAdapterError(
             f"Unsupported topo target: {topo.target}"
@@ -107,15 +107,28 @@ def _select_edges(wp: cq.Workplane, topo: TopoPredicate):
     rule = topo.rule
 
     if rule == "all":
-        return wp.edges()
+        sel = wp.edges()
 
-    if rule == "convex":
-        return wp.edges("|Z")  # placeholder predicate
+    elif rule == "convex":
+        sel = wp.edges("|Z")  # placeholder, deterministic
 
-    if rule == "by_length_gt":
-        return wp.edges().filter(lambda e: e.Length() > topo.value)
+    elif rule == "by_length_gt":
+        sel = wp.edges().filter(lambda e: e.Length() > topo.value)
 
-    if rule == "by_length_lt":
-        return wp.edges().filter(lambda e: e.Length() < topo.value)
+    elif rule == "by_length_lt":
+        sel = wp.edges().filter(lambda e: e.Length() < topo.value)
 
-    raise FeatureAdapterError(f"Unknown topo rule: {rule}")
+    else:
+        raise FeatureAdapterError(f"Unknown topo rule: {rule}")
+
+    # --------------------------
+    # HARD GUARANTEE: non-empty
+    # --------------------------
+    objs = sel.objects
+    if not objs:
+        raise FeatureAdapterError(
+            f"Topology selection returned 0 edges "
+            f"(rule='{rule}', value={topo.value})"
+        )
+
+    return sel
