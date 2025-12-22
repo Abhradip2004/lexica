@@ -59,6 +59,8 @@ class TransformKind(str, Enum):
 class FeatureKind(str, Enum):
     FILLET = "fillet"
     CHAMFER = "chamfer"
+    SHELL = "shell"
+    HOLE = "hole"
 
 
 # ---------------------------------------------------------------------------

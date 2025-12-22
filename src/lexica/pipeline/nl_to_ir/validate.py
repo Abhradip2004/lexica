@@ -139,23 +139,51 @@ def _validate_ops_semantics(model: IRModel) -> None:
                     f"Feature op {idx} has invalid feature_kind"
                 )
 
-            # Feature params
-            _require_params(
-                op,
-                required={
-                    FeatureKind.FILLET: {"radius"},
-                    FeatureKind.CHAMFER: {"distance"},
-                }[op.feature_kind],
-                idx=idx,
-            )
+            # --------------------------
+            # Feature semantics
+            # --------------------------
 
-            # Topology intent required for topo dependent features
-            if op.feature_kind in (FeatureKind.FILLET, FeatureKind.CHAMFER):
+            if op.feature_kind == FeatureKind.FILLET:
+                _require_params(op, required={"radius"}, idx=idx)
+
                 if op.topology is None:
                     raise IRValidationError(
-                        f"Feature op {idx} requires topology intent"
+                        f"Feature op {idx} (fillet) requires topology intent"
                     )
                 _validate_topology(op.topology, idx)
+
+            elif op.feature_kind == FeatureKind.CHAMFER:
+                _require_params(op, required={"distance"}, idx=idx)
+
+                if op.topology is None:
+                    raise IRValidationError(
+                        f"Feature op {idx} (chamfer) requires topology intent"
+                    )
+                _validate_topology(op.topology, idx)
+
+            elif op.feature_kind == FeatureKind.SHELL:
+                _require_params(op, required={"thickness"}, idx=idx)
+
+            elif op.feature_kind == FeatureKind.HOLE:
+                _require_params(op, required={"diameter"}, idx=idx)
+
+                has_depth = "depth" in op.params
+                has_through_all = op.params.get("through_all", False)
+
+                if has_depth and has_through_all:
+                    raise IRValidationError(
+                        f"Hole op {idx} cannot have both depth and through_all"
+                    )
+
+                if not has_depth and not has_through_all:
+                    raise IRValidationError(
+                        f"Hole op {idx} requires depth or through_all"
+                    )
+
+            else:
+                raise IRValidationError(
+                    f"Unsupported feature kind '{op.feature_kind}' at index {idx}"
+                )
 
         # --------------------------
         # Boolean
@@ -196,11 +224,13 @@ def _validate_ops_semantics(model: IRModel) -> None:
                     f"Export op {idx} has invalid path"
                 )
 
+        # --------------------------
+        # Unknown
+        # --------------------------
         else:
             raise IRValidationError(
                 f"Unknown IR op kind at index {idx}: {kind}"
             )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

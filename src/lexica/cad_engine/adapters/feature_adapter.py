@@ -27,6 +27,12 @@ def execute_feature(op: FeatureOp, input_shape):
 
     if kind == "rotate":
         return _rotate(op, input_shape)
+    
+    if kind == "shell":
+        return _shell(op, input_shape)
+    
+    elif kind == "hole":
+        return _hole(op, input_shape)
 
     raise FeatureAdapterError(f"Unknown feature kind: {kind}")
 
@@ -35,7 +41,7 @@ def execute_feature(op: FeatureOp, input_shape):
 # Feature implementations
 # ---------------------------
 
-def _fillet(op: FeatureOp, shape):
+def _fillet(op: FeatureOp, shape) -> cq.Workplane:
     radius = op.params.get("radius")
     if radius is None:
         raise FeatureAdapterError("Fillet requires radius")
@@ -48,7 +54,7 @@ def _fillet(op: FeatureOp, shape):
     return result.val()
 
 
-def _chamfer(op: FeatureOp, shape):
+def _chamfer(op: FeatureOp, shape) -> cq.Workplane:
     distance = op.params.get("distance")
     if distance is None:
         raise FeatureAdapterError("Chamfer requires distance")
@@ -60,7 +66,7 @@ def _chamfer(op: FeatureOp, shape):
 
     return result.val()
 
-def _translate(op: FeatureOp, shape):
+def _translate(op: FeatureOp, shape) -> cq.Workplane:
     dx = op.params.get("dx", 0.0)
     dy = op.params.get("dy", 0.0)
     dz = op.params.get("dz", 0.0)
@@ -70,7 +76,7 @@ def _translate(op: FeatureOp, shape):
 
     return result.val()
 
-def _rotate(op: FeatureOp, shape):
+def _rotate(op: FeatureOp, shape) -> cq.Workplane:
     axis = op.params.get("axis")
     angle = op.params.get("angle_deg")
 
@@ -90,6 +96,77 @@ def _rotate(op: FeatureOp, shape):
 
     wp = cq.Workplane(obj=shape)
     result = wp.rotate(p1, p2, angle)
+
+    return result.val()
+
+def _shell(op: FeatureOp, shape) -> cq.Workplane:
+    thickness = op.params.get("thickness")
+
+    if thickness is None:
+        raise FeatureAdapterError("Shell requires 'thickness' parameter")
+
+    if not isinstance(thickness, (int, float)):
+        raise FeatureAdapterError("Shell thickness must be a number")
+
+    if thickness <= 0:
+        raise FeatureAdapterError("Shell thickness must be positive")
+
+    try:
+        wp = cq.Workplane(obj=shape)
+
+        # Inward shell (engineering default)
+        # Negative thickness preserves external dimensions
+        result = wp.faces().shell(-float(thickness))
+
+    except Exception as e:
+        # OCC / CadQuery throws for impossible shells
+        raise FeatureAdapterError(
+            f"Shell operation failed (thickness={thickness}): {e}"
+        )
+
+    # CadQuery returns a Workplane; extract the shape
+    return result.val()
+
+def _hole(op: FeatureOp, shape):
+    diameter = op.params.get("diameter")
+    depth = op.params.get("depth")
+    through_all = op.params.get("through_all", False)
+
+    if diameter is None:
+        raise FeatureAdapterError("Hole requires 'diameter'")
+
+    if not isinstance(diameter, (int, float)) or diameter <= 0:
+        raise FeatureAdapterError("Hole diameter must be positive number")
+
+    if depth is not None:
+        if not isinstance(depth, (int, float)) or depth <= 0:
+            raise FeatureAdapterError("Hole depth must be positive number")
+
+    try:
+        wp = cq.Workplane(obj=shape)
+
+        # Determine hole height
+        if through_all:
+            # Bounding box height + margin
+            bb = shape.BoundingBox()
+            height = bb.zlen + 2.0
+        else:
+            height = float(depth)
+
+        # Create cutting cylinder
+        cutter = (
+            cq.Workplane("XY")
+            .circle(diameter / 2.0)
+            .extrude(height)
+        )
+
+        # Boolean cut
+        result = wp.cut(cutter)
+
+    except Exception as e:
+        raise FeatureAdapterError(
+            f"Hole operation failed: {e}"
+        )
 
     return result.val()
 
