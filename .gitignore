@@ -14,3 +14,5 @@ venv/
 
 test.py
 lexica.egg-info/
+
+src_lexica_tree.txt
