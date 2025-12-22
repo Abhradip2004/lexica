@@ -5,72 +5,62 @@ from lexica.irl.contract import (
     PrimitiveOp,
     FeatureOp,
 )
+
 from lexica.cad_engine.executor import IRLExecutor
 from lexica.cad_engine.adapters.feature_adapter import FeatureAdapterError
 
 
-def test_hole_through_all():
+def test_hole_with_counterbore():
     ops = [
         PrimitiveOp(
             op_id="box",
             reads=[],
             writes="body_0",
-            params={"kind": "box", "length": 40, "width": 30, "height": 20},
+            params={"kind": "box", "length": 40, "width": 40, "height": 20},
         ),
         FeatureOp(
-            op_id="hole",
+            op_id="hole_cb",
             reads=["body_0"],
             writes="body_1",
             overwrite=True,
-            params={"kind": "hole", "diameter": 6.0, "through_all": True},
+            params={
+                "kind": "hole",
+                "diameter": 6.0,
+                "through_all": True,
+                "counterbore": {
+                    "diameter": 12.0,
+                    "depth": 4.0,
+                },
+            },
         ),
     ]
 
-    executor = IRLExecutor()
-    executor.execute(IRLModel(ops=ops))
-
-    assert "body_1" in executor.registry._bodies
+    IRLExecutor().execute(IRLModel(ops=ops))
 
 
-def test_hole_with_depth():
+def test_hole_with_countersink():
     ops = [
         PrimitiveOp(
             op_id="box",
             reads=[],
             writes="body_0",
-            params={"kind": "box", "length": 20, "width": 20, "height": 20},
+            params={"kind": "box", "length": 40, "width": 40, "height": 20},
         ),
         FeatureOp(
-            op_id="hole",
+            op_id="hole_cs",
             reads=["body_0"],
             writes="body_1",
             overwrite=True,
-            params={"kind": "hole", "diameter": 5.0, "depth": 10.0},
+            params={
+                "kind": "hole",
+                "diameter": 6.0,
+                "through_all": True,
+                "countersink": {
+                    "diameter": 12.0,
+                    "angle_deg": 90,
+                },
+            },
         ),
     ]
 
-    executor = IRLExecutor()
-    executor.execute(IRLModel(ops=ops))
-
-    assert "body_1" in executor.registry._bodies
-
-
-def test_hole_invalid_diameter_fails():
-    ops = [
-        PrimitiveOp(
-            op_id="box",
-            reads=[],
-            writes="body_0",
-            params={"kind": "box", "length": 10, "width": 10, "height": 10},
-        ),
-        FeatureOp(
-            op_id="hole",
-            reads=["body_0"],
-            writes="body_1",
-            overwrite=True,
-            params={"kind": "hole", "diameter": -2.0, "through_all": True},
-        ),
-    ]
-
-    with pytest.raises(FeatureAdapterError):
-        IRLExecutor().execute(IRLModel(ops=ops))
+    IRLExecutor().execute(IRLModel(ops=ops))

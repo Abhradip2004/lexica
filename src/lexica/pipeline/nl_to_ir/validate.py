@@ -167,8 +167,12 @@ def _validate_ops_semantics(model: IRModel) -> None:
             elif op.feature_kind == FeatureKind.HOLE:
                 _require_params(op, required={"diameter"}, idx=idx)
 
-                has_depth = "depth" in op.params
-                has_through_all = op.params.get("through_all", False)
+                diameter = op.params.get("diameter")
+                depth = op.params.get("depth")
+                through_all = op.params.get("through_all", False)
+
+                has_depth = depth is not None
+                has_through_all = bool(through_all)
 
                 if has_depth and has_through_all:
                     raise IRValidationError(
@@ -179,6 +183,34 @@ def _validate_ops_semantics(model: IRModel) -> None:
                     raise IRValidationError(
                         f"Hole op {idx} requires depth or through_all"
                     )
+
+                counterbore = op.params.get("counterbore")
+                countersink = op.params.get("countersink")
+
+                if counterbore and countersink:
+                    raise IRValidationError(
+                        f"Hole op {idx} cannot have both counterbore and countersink"
+                    )
+
+                if counterbore:
+                    if not isinstance(counterbore, dict):
+                        raise IRValidationError(
+                            f"Hole op {idx} counterbore must be an object"
+                        )
+                    if "diameter" not in counterbore or "depth" not in counterbore:
+                        raise IRValidationError(
+                            f"Hole op {idx} counterbore requires diameter and depth"
+                        )
+
+                if countersink:
+                    if not isinstance(countersink, dict):
+                        raise IRValidationError(
+                            f"Hole op {idx} countersink must be an object"
+                        )
+                    if "diameter" not in countersink or "angle_deg" not in countersink:
+                        raise IRValidationError(
+                            f"Hole op {idx} countersink requires diameter and angle_deg"
+                        )
 
             else:
                 raise IRValidationError(

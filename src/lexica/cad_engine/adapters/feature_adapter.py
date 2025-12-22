@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import math
+
 import cadquery as cq
+from cadquery import Solid
 
 from lexica.irl.contract import FeatureOp, TopoPredicate
 
@@ -128,13 +131,17 @@ def _shell(op: FeatureOp, shape) -> cq.Workplane:
     return result.val()
 
 def _hole(op: FeatureOp, shape):
-    diameter = op.params.get("diameter")
-    depth = op.params.get("depth")
-    through_all = op.params.get("through_all", False)
+    params = op.params
 
-    if diameter is None:
-        raise FeatureAdapterError("Hole requires 'diameter'")
+    diameter = params.get("diameter")
+    depth = params.get("depth")
+    through_all = params.get("through_all", False)
+    counterbore = params.get("counterbore")
+    countersink = params.get("countersink")
 
+    # --------------------------
+    # Basic validation
+    # --------------------------
     if not isinstance(diameter, (int, float)) or diameter <= 0:
         raise FeatureAdapterError("Hole diameter must be positive number")
 
@@ -142,27 +149,94 @@ def _hole(op: FeatureOp, shape):
         if not isinstance(depth, (int, float)) or depth <= 0:
             raise FeatureAdapterError("Hole depth must be positive number")
 
+    # --------------------------
+    # Determine hole depth
+    # --------------------------
+    try:
+        bb = shape.BoundingBox()
+    except Exception:
+        raise FeatureAdapterError("Failed to compute shape bounding box")
+
+    if through_all:
+        hole_height = bb.zlen + 2.0
+    else:
+        hole_height = float(depth)
+
     try:
         wp = cq.Workplane(obj=shape)
 
-        # Determine hole height
-        if through_all:
-            # Bounding box height + margin
-            bb = shape.BoundingBox()
-            height = bb.zlen + 2.0
-        else:
-            height = float(depth)
-
-        # Create cutting cylinder
+        # --------------------------
+        # Base hole
+        # --------------------------
         cutter = (
             cq.Workplane("XY")
             .circle(diameter / 2.0)
-            .extrude(height)
+            .extrude(hole_height)
         )
 
-        # Boolean cut
         result = wp.cut(cutter)
 
+        # --------------------------
+        # Counterbore
+        # --------------------------
+        if counterbore:
+            cb_diam = counterbore.get("diameter")
+            cb_depth = counterbore.get("depth")
+
+            if cb_diam <= diameter:
+                raise FeatureAdapterError(
+                    "Counterbore diameter must be larger than hole diameter"
+                )
+
+            if cb_depth <= 0:
+                raise FeatureAdapterError(
+                    "Counterbore depth must be positive"
+                )
+
+            cb_cutter = (
+                cq.Workplane("XY")
+                .circle(cb_diam / 2.0)
+                .extrude(cb_depth)
+            )
+
+            result = result.cut(cb_cutter)
+
+        # --------------------------
+        # Countersink
+        # --------------------------
+        if countersink:
+            cs_diam = countersink.get("diameter")
+            cs_angle = countersink.get("angle_deg")
+
+            if cs_diam <= diameter:
+                raise FeatureAdapterError(
+                    "Countersink diameter must be larger than hole diameter"
+                )
+
+            if cs_angle <= 0 or cs_angle >= 180:
+                raise FeatureAdapterError(
+                    "Countersink angle must be between 0 and 180 degrees"
+                )
+
+            # Compute cone height from angle
+            radius_diff = (cs_diam - diameter) / 2.0
+            cone_height = radius_diff / math.tan(
+                math.radians(cs_angle / 2.0)
+            )
+
+            cs_cone = Solid.makeCone(
+                cs_diam / 2.0,      # top radius
+                diameter / 2.0,     # bottom radius
+                cone_height,
+            )
+
+            # Position cone at top face (Z=0 assumption for v1)
+            cs_wp = cq.Workplane(obj=cs_cone)
+
+            result = result.cut(cs_wp)
+
+    except FeatureAdapterError:
+        raise
     except Exception as e:
         raise FeatureAdapterError(
             f"Hole operation failed: {e}"
