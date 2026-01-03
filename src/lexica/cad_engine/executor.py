@@ -34,6 +34,9 @@ from lexica.cad_engine.adapters.primitive_adapter import execute_primitive
 from lexica.cad_engine.adapters.feature_adapter import execute_feature
 from lexica.cad_engine.adapters.boolean_adapter import execute_boolean
 from lexica.cad_engine.adapters.export_adapter import execute_export
+from lexica.cad_engine.adapters.transform_adapter import execute_transform
+from lexica.cad_engine.topology.resolver import resolve_face
+
 
 
 class ExecutorError(Exception):
@@ -116,6 +119,9 @@ class IRLExecutor:
 
         elif op.category == IRLOpCategory.BOOLEAN:
             self._exec_boolean(op)
+        
+        elif op.category == IRLOpCategory.TRANSFORM:
+            self._exec_transform(op)
 
         elif op.category == IRLOpCategory.EXPORT:
             self._exec_export(op)
@@ -191,6 +197,39 @@ class IRLExecutor:
             del self.registry._bodies[bid]
 
         self.registry.set(op.writes, result_shape)
+    
+    def _exec_transform(self, op: TransformOp) -> None:
+        if len(op.reads) != 1:
+            raise ExecutorError(
+                f"Transform op '{op.op_id}' must read exactly one body"
+            )
+        if not op.writes:
+            raise ExecutorError(
+                f"Transform op '{op.op_id}' must declare a write body"
+            )
+        
+        origin, normal = self._resolve_pivot(shape, op.pivot)
+
+        wp = cq.Workplane(obj=shape)
+        wp = wp.transformed(offset=origin)
+        wp = wp.rotate((0,0,0), normal.toTuple(), op.rotate)
+        wp = wp.translate(op.translate)
+
+        self._store(op.writes, wp.val())
+    
+    def _resolve_pivot(self, shape, pivot):
+        face = resolve_face(shape, pivot.face)
+        bb = face.BoundingBox()
+
+        if pivot.origin == "center":
+            origin = bb.center
+        elif pivot.origin == "min":
+            origin = bb.min
+        else:
+            origin = bb.max
+
+        normal = face.normalAt()
+        return origin, normal
 
     def _exec_export(self, op: ExportOp) -> None:
         if len(op.reads) != 1:

@@ -90,6 +90,7 @@ class IRLOpCategory(str, Enum):
     PRIMITIVE = "primitive"   # creates new topology
     FEATURE   = "feature"     # modifies existing topology
     BOOLEAN   = "boolean"     # multi-body topology ops
+    TRANSFORM = "transform"
     EXPORT    = "export"      # serialization only
 
 
@@ -146,7 +147,6 @@ class IRLOp:
     """
 
     op_id: OpID
-    category: IRLOpCategory
 
     # Body access contract
     reads: List[BodyID]
@@ -173,9 +173,7 @@ class PrimitiveOp(IRLOp):
     - writes MUST create a new body
     """
 
-    category: IRLOpCategory = field(
-        default=IRLOpCategory.PRIMITIVE, init=False
-    )
+    category: IRLOpCategory = IRLOpCategory.PRIMITIVE
 
 
 # ---------------------------------------------------------------------------
@@ -196,9 +194,7 @@ class FeatureOp(IRLOp):
 
     overwrite: bool = True
 
-    category: IRLOpCategory = field(
-        default=IRLOpCategory.FEATURE, init=False
-    )
+    category: IRLOpCategory = IRLOpCategory.FEATURE
 
 
 # ---------------------------------------------------------------------------
@@ -221,11 +217,37 @@ class BooleanOp(IRLOp):
     - writes MUST be a single resulting body
     """
 
-    category: IRLOpCategory = field(
-        default=IRLOpCategory.BOOLEAN, init=False
-    )
+    category: IRLOpCategory = IRLOpCategory.BOOLEAN
 
     kind: BooleanKind = BooleanKind.UNION
+
+#----------------------------------------------------------------------------
+# Transform
+#----------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class TransformOp(IRLOp):
+    category: IRLOpCategory = IRLOpCategory.TRANSFORM
+
+
+@dataclass(frozen=True)
+class FaceSelector:
+    """
+    Declarative face selector.
+
+    Examples:
+    - normal = "+Z"
+    - normal = "-Y"
+    """
+    normal: Literal["+X", "-X", "+Y", "-Y", "+Z", "-Z"]
+    index: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class Pivot:
+    face: FaceSelector
+    origin: Literal["center", "min", "max"] = "center"
+
 
 
 # ---------------------------------------------------------------------------
@@ -243,9 +265,7 @@ class ExportOp(IRLOp):
     - executor MUST NOT mutate body registry
     """
 
-    category: IRLOpCategory = field(
-        default=IRLOpCategory.EXPORT, init=False
-    )
+    category: IRLOpCategory = IRLOpCategory.EXPORT
 
 
 # ---------------------------------------------------------------------------

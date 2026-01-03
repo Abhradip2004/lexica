@@ -6,6 +6,16 @@ import cadquery as cq
 from cadquery import Solid
 
 from lexica.irl.contract import FeatureOp, TopoPredicate
+from lexica.cad_engine.topology.resolver import resolve_face
+from lexica.irl.contract import FaceSelector
+
+
+# face_sel = FaceSelector(**params["face"])
+# face = resolve_face(shape, op.face)
+# wp = cq.Workplane(obj=shape).workplane(obj=face)
+
+# wp = wp.center(op.center[0], op.center[1])
+# wp = wp.hole(op.diameter)
 
 
 class FeatureAdapterError(Exception):
@@ -33,6 +43,9 @@ def execute_feature(op: FeatureOp, input_shape):
     
     if kind == "shell":
         return _shell(op, input_shape)
+    
+    if kind == "transform":
+        return _transform(op, input_shape)
     
     elif kind == "hole":
         return _hole(op, input_shape)
@@ -133,116 +146,143 @@ def _shell(op: FeatureOp, shape) -> cq.Workplane:
 def _hole(op: FeatureOp, shape):
     params = op.params
 
+    # -------------------------------------------------
+    # Validation
+    # -------------------------------------------------
     diameter = params.get("diameter")
     depth = params.get("depth")
     through_all = params.get("through_all", False)
     counterbore = params.get("counterbore")
     countersink = params.get("countersink")
 
-    # --------------------------
-    # Basic validation
-    # --------------------------
     if not isinstance(diameter, (int, float)) or diameter <= 0:
-        raise FeatureAdapterError("Hole diameter must be positive number")
+        raise FeatureAdapterError("Hole diameter must be a positive number")
 
-    if depth is not None:
-        if not isinstance(depth, (int, float)) or depth <= 0:
-            raise FeatureAdapterError("Hole depth must be positive number")
+    if not through_all:
+        if depth is None or not isinstance(depth, (int, float)) or depth <= 0:
+            raise FeatureAdapterError("Blind hole requires positive depth")
 
-    # --------------------------
-    # Determine hole depth
-    # --------------------------
-    try:
-        bb = shape.BoundingBox()
-    except Exception:
-        raise FeatureAdapterError("Failed to compute shape bounding box")
+    if "face" not in params:
+        raise FeatureAdapterError("Hole requires face selector")
+
+    # -------------------------------------------------
+    # Topology v1 — FACE SELECTOR (not face object)
+    # -------------------------------------------------
+    face_sel = FaceSelector(**params["face"])
+    resolved = resolve_face(shape, face_sel)
+
+    cx, cy = params.get("center", (0, 0))
+
+    # -------------------------------------------------
+    # Base hole
+    # -------------------------------------------------
+    if isinstance(resolved, str):
+        # Selector case (">Z", "<X", etc.)
+        wp = (
+            cq.Workplane(obj=shape)
+            .faces(resolved)
+            .workplane()
+        )
+    else:
+        # Direct TopoDS_Face case
+        wp = cq.Workplane(obj=resolved)
 
     if through_all:
-        hole_height = bb.zlen + 2.0
+        result = wp.hole(diameter)
     else:
-        hole_height = float(depth)
+        result = wp.hole(diameter, depth)
 
-    try:
-        wp = cq.Workplane(obj=shape)
+    # -------------------------------------------------
+    # Counterbore
+    # -------------------------------------------------
+    if counterbore:
+        cb_diam = counterbore.get("diameter")
+        cb_depth = counterbore.get("depth")
 
-        # --------------------------
-        # Base hole
-        # --------------------------
-        cutter = (
-            cq.Workplane("XY")
-            .circle(diameter / 2.0)
-            .extrude(hole_height)
+        if not isinstance(cb_diam, (int, float)) or cb_diam <= diameter:
+            raise FeatureAdapterError(
+                "Counterbore diameter must be larger than hole diameter"
+            )
+
+        if not isinstance(cb_depth, (int, float)) or cb_depth <= 0:
+            raise FeatureAdapterError("Counterbore depth must be positive")
+
+        result = (
+            cq.Workplane(obj=result)
+            .faces(face_selector)
+            .workplane()
+            .center(cx, cy)
+            .hole(cb_diam, cb_depth)
         )
 
-        result = wp.cut(cutter)
+    # -------------------------------------------------
+    # Countersink
+    # -------------------------------------------------
+    if countersink:
+        cs_diam = countersink.get("diameter")
+        cs_angle = countersink.get("angle_deg")
 
-        # --------------------------
-        # Counterbore
-        # --------------------------
-        if counterbore:
-            cb_diam = counterbore.get("diameter")
-            cb_depth = counterbore.get("depth")
-
-            if cb_diam <= diameter:
-                raise FeatureAdapterError(
-                    "Counterbore diameter must be larger than hole diameter"
-                )
-
-            if cb_depth <= 0:
-                raise FeatureAdapterError(
-                    "Counterbore depth must be positive"
-                )
-
-            cb_cutter = (
-                cq.Workplane("XY")
-                .circle(cb_diam / 2.0)
-                .extrude(cb_depth)
+        if not isinstance(cs_diam, (int, float)) or cs_diam <= diameter:
+            raise FeatureAdapterError(
+                "Countersink diameter must be larger than hole diameter"
             )
 
-            result = result.cut(cb_cutter)
-
-        # --------------------------
-        # Countersink
-        # --------------------------
-        if countersink:
-            cs_diam = countersink.get("diameter")
-            cs_angle = countersink.get("angle_deg")
-
-            if cs_diam <= diameter:
-                raise FeatureAdapterError(
-                    "Countersink diameter must be larger than hole diameter"
-                )
-
-            if cs_angle <= 0 or cs_angle >= 180:
-                raise FeatureAdapterError(
-                    "Countersink angle must be between 0 and 180 degrees"
-                )
-
-            # Compute cone height from angle
-            radius_diff = (cs_diam - diameter) / 2.0
-            cone_height = radius_diff / math.tan(
-                math.radians(cs_angle / 2.0)
+        if not isinstance(cs_angle, (int, float)) or not (0 < cs_angle < 180):
+            raise FeatureAdapterError(
+                "Countersink angle must be between 0 and 180 degrees"
             )
 
-            cs_cone = Solid.makeCone(
-                cs_diam / 2.0,      # top radius
-                diameter / 2.0,     # bottom radius
-                cone_height,
+        radius_diff = (cs_diam - diameter) / 2.0
+        cone_height = radius_diff / math.tan(math.radians(cs_angle / 2.0))
+
+        result = (
+            cq.Workplane(obj=result)
+            .faces(face_selector)
+            .workplane()
+            .center(cx, cy)
+            .cone(
+                height=cone_height,
+                r1=cs_diam / 2.0,
+                r2=diameter / 2.0,
             )
-
-            # Position cone at top face (Z=0 assumption for v1)
-            cs_wp = cq.Workplane(obj=cs_cone)
-
-            result = result.cut(cs_wp)
-
-    except FeatureAdapterError:
-        raise
-    except Exception as e:
-        raise FeatureAdapterError(
-            f"Hole operation failed: {e}"
+            .cut(result)
         )
 
     return result.val()
+
+def _transform(op: FeatureOp, shape):
+    params = op.params
+
+    wp = cq.Workplane(obj=shape)
+
+    # --------------------------
+    # Translation
+    # --------------------------
+    if "translate" in params:
+        t = params["translate"]
+        dx = t.get("dx", 0)
+        dy = t.get("dy", 0)
+        dz = t.get("dz", 0)
+        wp = wp.translate((dx, dy, dz))
+
+    # --------------------------
+    # Rotation
+    # --------------------------
+    if "rotate" in params:
+        r = params["rotate"]
+        axis = r.get("axis")
+        angle = r.get("angle_deg", 0)
+
+        if axis == "X":
+            wp = wp.rotate((0, 0, 0), (1, 0, 0), angle)
+        elif axis == "Y":
+            wp = wp.rotate((0, 0, 0), (0, 1, 0), angle)
+        elif axis == "Z":
+            wp = wp.rotate((0, 0, 0), (0, 0, 1), angle)
+        else:
+            raise FeatureAdapterError(f"Invalid rotation axis: {axis}")
+
+    return wp.val()
 
 
 # ---------------------------
