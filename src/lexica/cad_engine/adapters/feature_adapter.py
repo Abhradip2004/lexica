@@ -24,7 +24,7 @@ class FeatureAdapterError(Exception):
 
 def execute_feature(op: FeatureOp, input_shape):
     """
-    Execute a feature op on a single body.
+    Execute a topology changing feature op on a single body.
     """
 
     kind = op.params.get("kind")
@@ -35,22 +35,13 @@ def execute_feature(op: FeatureOp, input_shape):
     if kind == "chamfer":
         return _chamfer(op, input_shape)
 
-    if kind == "translate":
-        return _translate(op, input_shape)
-
-    if kind == "rotate":
-        return _rotate(op, input_shape)
-    
     if kind == "shell":
         return _shell(op, input_shape)
-    
-    if kind == "transform":
-        return _transform(op, input_shape)
-    
-    elif kind == "hole":
+
+    if kind == "hole":
         return _hole(op, input_shape)
 
-    raise FeatureAdapterError(f"Unknown feature kind: {kind}")
+    raise FeatureAdapterError(f"Unknown or invalid feature kind: {kind}")
 
 
 # ---------------------------
@@ -79,39 +70,6 @@ def _chamfer(op: FeatureOp, shape) -> cq.Workplane:
 
     edges = _select_edges(wp, op.topo)
     result = edges.chamfer(distance)
-
-    return result.val()
-
-def _translate(op: FeatureOp, shape) -> cq.Workplane:
-    dx = op.params.get("dx", 0.0)
-    dy = op.params.get("dy", 0.0)
-    dz = op.params.get("dz", 0.0)
-
-    wp = cq.Workplane(obj=shape)
-    result = wp.translate((dx, dy, dz))
-
-    return result.val()
-
-def _rotate(op: FeatureOp, shape) -> cq.Workplane:
-    axis = op.params.get("axis")
-    angle = op.params.get("angle_deg")
-
-    if axis not in ("x", "y", "z"):
-        raise FeatureAdapterError("Rotate axis must be x, y, or z")
-
-    if angle is None:
-        raise FeatureAdapterError("Rotate requires angle_deg")
-
-    axis_map = {
-        "x": ((0, 0, 0), (1, 0, 0)),
-        "y": ((0, 0, 0), (0, 1, 0)),
-        "z": ((0, 0, 0), (0, 0, 1)),
-    }
-
-    p1, p2 = axis_map[axis]
-
-    wp = cq.Workplane(obj=shape)
-    result = wp.rotate(p1, p2, angle)
 
     return result.val()
 
@@ -249,41 +207,6 @@ def _hole(op: FeatureOp, shape):
         )
 
     return result.val()
-
-def _transform(op: FeatureOp, shape):
-    params = op.params
-
-    wp = cq.Workplane(obj=shape)
-
-    # --------------------------
-    # Translation
-    # --------------------------
-    if "translate" in params:
-        t = params["translate"]
-        dx = t.get("dx", 0)
-        dy = t.get("dy", 0)
-        dz = t.get("dz", 0)
-        wp = wp.translate((dx, dy, dz))
-
-    # --------------------------
-    # Rotation
-    # --------------------------
-    if "rotate" in params:
-        r = params["rotate"]
-        axis = r.get("axis")
-        angle = r.get("angle_deg", 0)
-
-        if axis == "X":
-            wp = wp.rotate((0, 0, 0), (1, 0, 0), angle)
-        elif axis == "Y":
-            wp = wp.rotate((0, 0, 0), (0, 1, 0), angle)
-        elif axis == "Z":
-            wp = wp.rotate((0, 0, 0), (0, 0, 1), angle)
-        else:
-            raise FeatureAdapterError(f"Invalid rotation axis: {axis}")
-
-    return wp.val()
-
 
 # ---------------------------
 # Topology selection (Level 0)

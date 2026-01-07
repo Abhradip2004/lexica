@@ -65,7 +65,7 @@ def resolve_face(shape: cq.Solid, selector: FaceSelector) -> cq.Face:
         if len(faces) > 1:
             raise ValueError(
                 f"Ambiguous {len(faces)} faces for '{selector.normal}'; "
-                f"specify index (0-{len(faces)-1)"
+                f"specify index (0-{len(faces)-1})"
             )
         return faces[0]  # Unique match
     

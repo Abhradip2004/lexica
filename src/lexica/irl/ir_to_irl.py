@@ -65,12 +65,16 @@ def lower_ir_to_irl(ir_model) -> IRLModel:
     - IR has NO body identity
     - Bodies are implicit and sequential
     - Boolean ops operate on:
+        - explicit operand indices (if provided), OR
         - current solid body (LHS)
         - most recent tool body (RHS)
     """
 
     body_ids = BodyIDGenerator()
     ops: List = []
+
+    # Deterministic list of all created bodies (by index)
+    body_history: List[str] = []
 
     # Main solid being built
     current_body = None
@@ -107,6 +111,7 @@ def lower_ir_to_irl(ir_model) -> IRLModel:
             else:
                 last_tool_body = body_id
 
+            body_history.append(body_id)
             continue
 
         # --------------------------------------------------
@@ -123,7 +128,7 @@ def lower_ir_to_irl(ir_model) -> IRLModel:
             new_body = body_ids.new("xf")
 
             ops.append(
-                FeatureOp(
+                TransformOp(
                     op_id=op_id,
                     reads=[target],
                     writes=new_body,
@@ -131,7 +136,6 @@ def lower_ir_to_irl(ir_model) -> IRLModel:
                         "kind": ir_op.transform_kind.value,
                         **ir_op.params,
                     },
-                    topo=None,
                 )
             )
 
@@ -141,10 +145,11 @@ def lower_ir_to_irl(ir_model) -> IRLModel:
             else:
                 last_tool_body = new_body
 
+            body_history.append(new_body)
             continue
 
         # --------------------------------------------------
-        # Feature (fillet / chamfer)
+        # Feature (fillet / chamfer / shell / hole)
         # --------------------------------------------------
         if kind == IROpKind.FEATURE:
             if current_body is None:
@@ -166,23 +171,41 @@ def lower_ir_to_irl(ir_model) -> IRLModel:
             )
 
             current_body = new_body
+            body_history.append(new_body)
             continue
 
         # --------------------------------------------------
-        # Boolean (implicit operands)
+        # Boolean
         # --------------------------------------------------
         if kind == IROpKind.BOOLEAN:
-            if current_body is None or last_tool_body is None:
-                raise LoweringError(
-                    "Boolean op requires a current body and a tool body"
-                )
+            if ir_op.operands is not None:
+                # Explicit operand indices
+                try:
+                    reads = [body_history[i] for i in ir_op.operands]
+                except IndexError:
+                    raise LoweringError(
+                        f"Boolean op '{op_id}' references invalid operand index"
+                    )
+
+                if len(reads) < 2:
+                    raise LoweringError(
+                        f"Boolean op '{op_id}' requires at least 2 operands"
+                    )
+
+            else:
+                # Backward-compatible implicit behavior
+                if current_body is None or last_tool_body is None:
+                    raise LoweringError(
+                        "Boolean op requires a current body and a tool body"
+                    )
+                reads = [current_body, last_tool_body]
 
             result_body = body_ids.new("bool")
 
             ops.append(
                 BooleanOp(
                     op_id=op_id,
-                    reads=[current_body, last_tool_body],
+                    reads=reads,
                     writes=result_body,
                     kind=BooleanKind(ir_op.boolean_kind.value),
                 )
@@ -190,6 +213,7 @@ def lower_ir_to_irl(ir_model) -> IRLModel:
 
             current_body = result_body
             last_tool_body = None
+            body_history.append(result_body)
             continue
 
         # --------------------------------------------------
@@ -215,7 +239,6 @@ def lower_ir_to_irl(ir_model) -> IRLModel:
         raise LoweringError(f"Unknown IR op kind: {kind}")
 
     return IRLModel(ops=ops)
-
 
 # ---------------------------------------------------------------------------
 # Topology lowering (Level 0)

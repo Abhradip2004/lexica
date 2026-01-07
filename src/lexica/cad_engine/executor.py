@@ -35,7 +35,7 @@ from lexica.cad_engine.adapters.feature_adapter import execute_feature
 from lexica.cad_engine.adapters.boolean_adapter import execute_boolean
 from lexica.cad_engine.adapters.export_adapter import execute_export
 from lexica.cad_engine.adapters.transform_adapter import execute_transform
-from lexica.cad_engine.topology.resolver import resolve_face
+# from lexica.cad_engine.topology.resolver import resolve_face
 
 
 
@@ -172,8 +172,8 @@ class IRLExecutor:
         input_shape = self.registry.get(src_id)
         output_shape = execute_feature(op, input_shape)
 
-        if op.overwrite:
-            del self.registry._bodies[src_id]
+        # if op.overwrite:
+        #     del self.registry._bodies[src_id]
 
         self.registry.set(op.writes, output_shape)
 
@@ -190,46 +190,64 @@ class IRLExecutor:
         self.registry.require_all(op.reads)
 
         input_shapes = [self.registry.get(bid) for bid in op.reads]
-        result_shape = execute_boolean(op, input_shapes)
 
-        # consume all input bodies
+        try:
+            result_shape = execute_boolean(op, input_shapes)
+        except Exception as e:
+            raise ExecutorError(
+                f"Boolean op '{op.op_id}' failed: {e}"
+            )
+
+        # Kill all inputs only after success
         for bid in op.reads:
-            del self.registry._bodies[bid]
+            self.registry.kill(bid)
 
         self.registry.set(op.writes, result_shape)
     
     def _exec_transform(self, op: TransformOp) -> None:
         if len(op.reads) != 1:
-            raise ExecutorError(f"Transform op '{op.op_id}' must read exactly one body")
+            raise ExecutorError(
+                f"Transform op '{op.op_id}' must read exactly one body"
+            )
         if not op.writes:
-            raise ExecutorError(f"Transform op '{op.op_id}' must declare a write body")
-        
+            raise ExecutorError(
+                f"Transform op '{op.op_id}' must declare a write body"
+            )
+
         self.registry.require_all(op.reads)
+
         src_id = op.reads[0]
-        shape = self.registry.get(src_id)
-        
-        origin, normal = self._resolve_pivot(shape, op.pivot)
-        
-        wp = cq.Workplane(obj=shape)
-        wp = wp.transformed(offset=origin)
-        wp = wp.rotate((0,0,0), normal.toTuple(), op.rotate)
-        wp = wp.translate(op.translate)
-        
-        self.registry.set(op.writes, wp.val())
+        input_shape = self.registry.get(src_id)
+
+        # --------------------------
+        # Execute (no side effects)
+        # --------------------------
+        try:
+            output_shape = execute_transform(op, input_shape)
+        except Exception as e:
+            raise ExecutorError(
+                f"Transform op '{op.op_id}' failed: {e}"
+            )
+
+        # --------------------------
+        # Atomic lifecycle update
+        # --------------------------
+        self.registry.kill(src_id)
+        self.registry.set(op.writes, output_shape)
     
-    def _resolve_pivot(self, shape, pivot):
-        face = resolve_face(shape, pivot.face)
-        bb = face.BoundingBox()
+    # def _resolve_pivot(self, shape, pivot):
+    #     face = resolve_face(shape, pivot.face)
+    #     bb = face.BoundingBox()
 
-        if pivot.origin == "center":
-            origin = bb.center
-        elif pivot.origin == "min":
-            origin = bb.min
-        else:
-            origin = bb.max
+    #     if pivot.origin == "center":
+    #         origin = bb.center
+    #     elif pivot.origin == "min":
+    #         origin = bb.min
+    #     else:
+    #         origin = bb.max
 
-        normal = face.normalAt()
-        return origin, normal
+    #     normal = face.normalAt()
+    #     return origin, normal
 
     def _exec_export(self, op: ExportOp) -> None:
         if len(op.reads) != 1:
@@ -245,3 +263,8 @@ class IRLExecutor:
 
         shape = self.registry.get(op.reads[0])
         execute_export(op, shape)
+
+    def kill(self, body_id: BodyID) -> None:
+        if body_id not in self._bodies:
+            raise ExecutorError(f"Cannot kill non-existent body '{body_id}'")
+        del self._bodies[body_id]

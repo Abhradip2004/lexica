@@ -32,20 +32,32 @@ def _resolve_bbox_pivot(shape, corner: str):
 def execute_transform(op: TransformOp, shape):
     params = op.params
     kind = params.get("kind")
+    if kind not in ("translate", "rotate"):
+        raise TransformAdapterError(f"Invalid transform kind: {kind}")
 
-    wp = cq.Workplane(obj=shape)
+    wp = cq.Workplane(obj=shape)    
 
     try:
         if kind == "translate":
             dx = params.get("dx", 0)
             dy = params.get("dy", 0)
             dz = params.get("dz", 0)
+            
+            if not all(isinstance(v, (int, float)) for v in (dx, dy, dz)):
+                raise TransformAdapterError("Translate requires numeric dx, dy, dz")
+            
             return wp.translate((dx, dy, dz)).val()
 
         elif kind == "rotate":
             axis = params.get("axis", "z")
             angle = params.get("angle_deg", 0)
             pivot = params.get("pivot")
+            
+            if axis not in ("x", "y", "z"):
+                raise TransformAdapterError(f"Invalid rotation axis: {axis}")
+            
+            if not isinstance(angle, (int, float)):
+                raise TransformAdapterError("Rotate requires numeric angle_deg")
 
             axis_vec = {
                 "x": (1, 0, 0),
@@ -56,7 +68,7 @@ def execute_transform(op: TransformOp, shape):
             if axis_vec is None:
                 raise TransformAdapterError(f"Invalid rotation axis: {axis}")
 
-            wp = cq.Workplane(obj=shape)
+            # wp = cq.Workplane(obj=shape)
 
             # ---------------------------------
             # Pivot handling

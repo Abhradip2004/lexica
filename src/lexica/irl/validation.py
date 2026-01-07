@@ -178,6 +178,36 @@ def _validate_ops_semantics(model: IRLModel) -> None:
                 )
 
         # --------------------------
+        # Transform
+        # --------------------------
+        elif cat == IRLOpCategory.TRANSFORM:
+            if not isinstance(op, TransformOp):
+                raise IRLValidationError(
+                    f"Transform op '{op.op_id}' has wrong type"
+                )
+
+            if len(op.reads) != 1:
+                raise IRLValidationError(
+                    f"Transform op '{op.op_id}' must read exactly one body"
+                )
+
+            if op.writes is None:
+                raise IRLValidationError(
+                    f"Transform op '{op.op_id}' must write a body"
+                )
+
+            if op.topo is not None:
+                raise IRLValidationError(
+                    f"Transform op '{op.op_id}' must not specify topology"
+                )
+
+            kind = op.params.get("kind")
+            if kind not in ("translate", "rotate"):
+                raise IRLValidationError(
+                    f"Transform op '{op.op_id}' has invalid kind '{kind}'"
+                )
+        
+        # --------------------------
         # Boolean
         # --------------------------
         elif cat == IRLOpCategory.BOOLEAN:
