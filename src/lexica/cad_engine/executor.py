@@ -200,22 +200,22 @@ class IRLExecutor:
     
     def _exec_transform(self, op: TransformOp) -> None:
         if len(op.reads) != 1:
-            raise ExecutorError(
-                f"Transform op '{op.op_id}' must read exactly one body"
-            )
+            raise ExecutorError(f"Transform op '{op.op_id}' must read exactly one body")
         if not op.writes:
-            raise ExecutorError(
-                f"Transform op '{op.op_id}' must declare a write body"
-            )
+            raise ExecutorError(f"Transform op '{op.op_id}' must declare a write body")
+        
+        self.registry.require_all(op.reads)
+        src_id = op.reads[0]
+        shape = self.registry.get(src_id)
         
         origin, normal = self._resolve_pivot(shape, op.pivot)
-
+        
         wp = cq.Workplane(obj=shape)
         wp = wp.transformed(offset=origin)
         wp = wp.rotate((0,0,0), normal.toTuple(), op.rotate)
         wp = wp.translate(op.translate)
-
-        self._store(op.writes, wp.val())
+        
+        self.registry.set(op.writes, wp.val())
     
     def _resolve_pivot(self, shape, pivot):
         face = resolve_face(shape, pivot.face)
