@@ -125,29 +125,48 @@ def _validate_body_flow(model: IRLModel) -> None:
 
 
 def _validate_ops_semantics(model: IRLModel) -> None:
+    """
+    Validate per-operation semantic correctness for an IRL program.
+
+    This stage does NOT reason about body lifetimes (that is handled elsewhere).
+    It validates:
+    - Correct op subclass per category
+    - Correct read/write arity
+    - Legal parameter usage per operation kind
+    - Proper topology usage rules
+    """
+
     for op in model.ops:
         cat = op.category
 
-        # --------------------------
-        # Primitive
-        # --------------------------
+        # ==================================================
+        # PRIMITIVE OPERATIONS
+        # ==================================================
+        # - Create new geometry
+        # - Must not read any bodies
+        # - Must write exactly one new body
         if cat == IRLOpCategory.PRIMITIVE:
             if not isinstance(op, PrimitiveOp):
                 raise IRLValidationError(
                     f"Primitive op '{op.op_id}' has wrong type"
                 )
+
             if op.reads:
                 raise IRLValidationError(
                     f"Primitive op '{op.op_id}' must not read bodies"
                 )
+
             if op.writes is None:
                 raise IRLValidationError(
                     f"Primitive op '{op.op_id}' must write a body"
                 )
 
-        # --------------------------
-        # Feature
-        # --------------------------
+        # ==================================================
+        # FEATURE OPERATIONS
+        # ==================================================
+        # - Modify topology of exactly one input body
+        # - Always produce a new body
+        # - Some features require topology selection
         elif cat == IRLOpCategory.FEATURE:
             if not isinstance(op, FeatureOp):
                 raise IRLValidationError(
@@ -166,28 +185,40 @@ def _validate_ops_semantics(model: IRLModel) -> None:
 
             kind = op.params.get("kind")
 
+            # ----------------------------------------------
             # Topology-dependent features
+            # ----------------------------------------------
+            # These features REQUIRE explicit topology selection
             if kind in ("fillet", "chamfer"):
                 if op.topo is None:
                     raise IRLValidationError(
                         f"Feature op '{op.op_id}' of kind '{kind}' requires topo selection"
                     )
 
+            # ----------------------------------------------
             # Topology-independent features
+            # ----------------------------------------------
+            # These features must NOT specify topology
             elif kind in ("shell", "hole"):
                 if op.topo is not None:
                     raise IRLValidationError(
                         f"Feature op '{op.op_id}' of kind '{kind}' must not specify topology"
                     )
 
+            # ----------------------------------------------
+            # Unknown feature kinds are illegal
+            # ----------------------------------------------
             else:
                 raise IRLValidationError(
                     f"Unknown feature kind '{kind}' in op '{op.op_id}'"
                 )
 
-        # --------------------------
-        # Transform
-        # --------------------------
+        # ==================================================
+        # TRANSFORM OPERATIONS
+        # ==================================================
+        # - Read exactly one body
+        # - Produce a new transformed body
+        # - Must not specify topology
         elif cat == IRLOpCategory.TRANSFORM:
             if not isinstance(op, TransformOp):
                 raise IRLValidationError(
@@ -215,42 +246,54 @@ def _validate_ops_semantics(model: IRLModel) -> None:
                     f"Transform op '{op.op_id}' has invalid kind '{kind}'"
                 )
 
-        # --------------------------
-        # Boolean
-        # --------------------------
+        # ==================================================
+        # BOOLEAN OPERATIONS
+        # ==================================================
+        # - Combine or subtract multiple bodies
+        # - Must read at least two bodies
+        # - Must write exactly one resulting body
         elif cat == IRLOpCategory.BOOLEAN:
             if not isinstance(op, BooleanOp):
                 raise IRLValidationError(
                     f"Boolean op '{op.op_id}' has wrong type"
                 )
+
             if len(op.reads) < 2:
                 raise IRLValidationError(
                     f"Boolean op '{op.op_id}' must read >= 2 bodies"
                 )
+
             if op.writes is None:
                 raise IRLValidationError(
                     f"Boolean op '{op.op_id}' must write a body"
                 )
 
-        # --------------------------
-        # Export
-        # --------------------------
+        # ==================================================
+        # EXPORT OPERATIONS
+        # ==================================================
+        # - Serialize a body
+        # - Must read exactly one body
+        # - Must NOT write a body
         elif cat == IRLOpCategory.EXPORT:
             if not isinstance(op, ExportOp):
                 raise IRLValidationError(
                     f"Export op '{op.op_id}' has wrong type"
                 )
+
             if len(op.reads) != 1:
                 raise IRLValidationError(
                     f"Export op '{op.op_id}' must read exactly one body"
                 )
+
             if op.writes is not None:
                 raise IRLValidationError(
                     f"Export op '{op.op_id}' must not write a body"
                 )
 
+        # ==================================================
+        # UNKNOWN OP CATEGORY (HARD ERROR)
+        # ==================================================
         else:
             raise IRLValidationError(
                 f"Unknown IRL op category: {cat}"
             )
-

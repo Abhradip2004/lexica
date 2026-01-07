@@ -108,49 +108,63 @@ def _hole(op: FeatureOp, shape):
     depth = params.get("depth")
     through_all = params.get("through_all", False)
 
-    # --------------------------
-    # Validation
-    # --------------------------
-    if not isinstance(diameter, (int, float)) or diameter <= 0:
-        raise FeatureAdapterError("Hole diameter must be positive")
+    counterbore = params.get("counterbore")
+    countersink = params.get("countersink")
 
-    if not through_all:
-        if not isinstance(depth, (int, float)) or depth <= 0:
-            raise FeatureAdapterError("Blind hole requires positive depth")
-
-    if "face" not in params:
-        raise FeatureAdapterError("Hole requires face selector")
-
-    if params.get("counterbore") or params.get("countersink"):
-        raise FeatureAdapterError(
-            "Counterbore / countersink not supported yet"
-        )
-
-    # --------------------------
-    # Face resolution
-    # --------------------------
     face_sel = FaceSelector(**params["face"])
-    face = resolve_face(shape, face_sel)
-
     cx, cy = params.get("center", (0, 0))
 
-    # --------------------------
-    # Hole execution
-    # --------------------------
+    dir_map = {
+        "+X": ">X", "-X": "<X",
+        "+Y": ">Y", "-Y": "<Y",
+        "+Z": ">Z", "-Z": "<Z",
+    }
+    dir_str = dir_map[face_sel.normal]
+
+    # -------------------------------------------------
+    # SINGLE workplane 
+    # -------------------------------------------------
     wp = (
         cq.Workplane(obj=shape)
-        .faces(face)
+        .faces(dir_str)
         .workplane()
         .center(cx, cy)
     )
 
+    # -------------------------------------------------
+    # Base hole
+    # -------------------------------------------------
     if through_all:
-        result = wp.hole(diameter)
+        wp = wp.hole(diameter)
     else:
-        result = wp.hole(diameter, depth)
+        wp = wp.hole(diameter, depth)
 
-    return result.val()
+    # -------------------------------------------------
+    # Counterbore (same workplane!)
+    # -------------------------------------------------
+    if counterbore:
+        wp = wp.hole(
+            counterbore["diameter"],
+            counterbore["depth"],
+        )
 
+    # -------------------------------------------------
+    # Countersink (same workplane!)
+    # -------------------------------------------------
+    if countersink:
+        cs_d = countersink["diameter"]
+        cs_angle = countersink["angle_deg"]
+
+        radius_diff = (cs_d - diameter) / 2.0
+        cone_height = radius_diff / math.tan(math.radians(cs_angle / 2.0))
+
+        wp = wp.cone(
+            height=cone_height,
+            r1=cs_d / 2.0,
+            r2=diameter / 2.0,
+        ).cut(wp)
+
+    return wp.val()
 
 # ---------------------------
 # Topology selection (Level 0)
