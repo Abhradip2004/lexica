@@ -134,16 +134,21 @@ def _hole(op: FeatureOp, shape):
     # -------------------------------------------------
     # Base hole
     # -------------------------------------------------
-    if isinstance(resolved, str):
-        # Selector case (">Z", "<X", etc.)
-        wp = (
-            cq.Workplane(obj=shape)
-            .faces(resolved)
-            .workplane()
-        )
+    wp = cq.Workplane(obj=shape)
+
+    if isinstance(face_sel, FaceSelector):
+        dir_str = {
+            "+X": ">X",
+            "-X": "<X",
+            "+Y": ">Y",
+            "-Y": "<Y",
+            "+Z": ">Z",
+            "-Z": "<Z",
+        }[face_sel.normal]
+
+        wp = wp.faces(dir_str).workplane()
     else:
-        # Direct TopoDS_Face case
-        wp = cq.Workplane(obj=resolved)
+        raise FeatureAdapterError("Hole requires a FaceSelector")
 
     if through_all:
         result = wp.hole(diameter)

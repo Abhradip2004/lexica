@@ -53,6 +53,11 @@ class BodyRegistry:
     def __init__(self) -> None:
         self._bodies: Dict[BodyID, object] = {}
 
+    def kill(self, body_id: BodyID) -> None:
+        if body_id not in self._bodies:
+            raise ExecutorError(f"Cannot kill non-existent body '{body_id}'")
+        del self._bodies[body_id]
+
     # ----------------------------
     # Access
     # ----------------------------
@@ -264,7 +269,3 @@ class IRLExecutor:
         shape = self.registry.get(op.reads[0])
         execute_export(op, shape)
 
-    def kill(self, body_id: BodyID) -> None:
-        if body_id not in self._bodies:
-            raise ExecutorError(f"Cannot kill non-existent body '{body_id}'")
-        del self._bodies[body_id]

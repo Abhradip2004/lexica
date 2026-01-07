@@ -20,6 +20,7 @@ from typing import List
 
 from lexica.irl.contract import (
     IRLModel,
+    TransformOp,
     PrimitiveOp,
     FeatureOp,
     BooleanOp,
@@ -244,16 +245,23 @@ def lower_ir_to_irl(ir_model) -> IRLModel:
 # Topology lowering (Level 0)
 # ---------------------------------------------------------------------------
 
-def _lower_topology(ir_op) -> TopoPredicate:
+def _lower_topology(ir_op) -> TopoPredicate | None:
     """
     Convert IR topology intent into IRL TopoPredicate.
+
+    Only topology-dependent features (fillet, chamfer) require this.
+    Other features must return None.
     """
 
-    topo = ir_op.topology
+    # Feature kinds that REQUIRE topology
+    kind = ir_op.feature_kind.value
+    if kind not in ("fillet", "chamfer"):
+        return None
 
+    topo = ir_op.topology
     if topo is None:
         raise LoweringError(
-            f"Feature '{ir_op.op_id}' requires topology selection"
+            f"Feature '{kind}' requires topology selection"
         )
 
     return TopoPredicate(

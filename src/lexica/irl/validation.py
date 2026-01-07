@@ -20,6 +20,7 @@ from typing import Set
 from lexica.irl.contract import (
     IRLModel,
     IRLOpCategory,
+    TransformOp,
     PrimitiveOp,
     FeatureOp,
     BooleanOp,
@@ -64,18 +65,22 @@ def _validate_op_ids_unique(model: IRLModel) -> None:
 
 def _validate_body_flow(model: IRLModel) -> None:
     """
-    Enforce body lifecycle semantics:
-    - bodies must be LIVE before read
-    - overwrite features kill input bodies
-    - fork features preserve input bodies
-    - booleans consume all operands
+    Validate body lifetimes across IRL ops.
+
+    Rules:
+    - A body must be written before it is read
+    - PRIMITIVE creates a new LIVE body
+    - TRANSFORM creates a new LIVE body, source remains LIVE
+    - FEATURE (overwrite=True) kills its input body
+    - BOOLEAN kills all input bodies
+    - EXPORT does not affect lifetimes
     """
 
-    live_bodies: Set[str] = set()
+    live_bodies: set[str] = set()
 
     for op in model.ops:
         # --------------------------
-        # Reads must be LIVE
+        # Validate reads
         # --------------------------
         for body in op.reads:
             if body not in live_bodies:
@@ -84,38 +89,39 @@ def _validate_body_flow(model: IRLModel) -> None:
                 )
 
         # --------------------------
-        # Primitive
+        # Apply op semantics
         # --------------------------
-        if isinstance(op, PrimitiveOp):
+
+        # PRIMITIVE: create body
+        if op.category == IRLOpCategory.PRIMITIVE:
             live_bodies.add(op.writes)
 
-        # --------------------------
-        # Feature
-        # --------------------------
-        elif isinstance(op, FeatureOp):
-            src = op.reads[0]
+        # TRANSFORM: create new body, keep source alive
+        elif op.category == IRLOpCategory.TRANSFORM:
+            live_bodies.add(op.writes)
 
+        # FEATURE: overwrite semantics
+        elif op.category == IRLOpCategory.FEATURE:
             if op.overwrite:
-                # kill source body
-                live_bodies.remove(src)
-
-            # new body always becomes live
+                for body in op.reads:
+                    live_bodies.remove(body)
             live_bodies.add(op.writes)
 
-        # --------------------------
-        # Boolean
-        # --------------------------
-        elif isinstance(op, BooleanOp):
+        # BOOLEAN: consumes all inputs
+        elif op.category == IRLOpCategory.BOOLEAN:
             for body in op.reads:
                 live_bodies.remove(body)
-
             live_bodies.add(op.writes)
 
-        # --------------------------
-        # Export
-        # --------------------------
-        elif isinstance(op, ExportOp):
+        # EXPORT: no lifecycle change
+        elif op.category == IRLOpCategory.EXPORT:
             pass
+
+        else:
+            raise IRLValidationError(
+                f"Unknown IRL op category '{op.category}' in body flow validation"
+            )
+
 
 
 def _validate_ops_semantics(model: IRLModel) -> None:
@@ -167,10 +173,12 @@ def _validate_ops_semantics(model: IRLModel) -> None:
                         f"Feature op '{op.op_id}' of kind '{kind}' requires topo selection"
                     )
 
-            # Topology-independent features (transforms)
-            elif kind in ("translate", "rotate"):
-                # topo must be None or ignored
-                pass
+            # Topology-independent features
+            elif kind in ("shell", "hole"):
+                if op.topo is not None:
+                    raise IRLValidationError(
+                        f"Feature op '{op.op_id}' of kind '{kind}' must not specify topology"
+                    )
 
             else:
                 raise IRLValidationError(
@@ -206,7 +214,7 @@ def _validate_ops_semantics(model: IRLModel) -> None:
                 raise IRLValidationError(
                     f"Transform op '{op.op_id}' has invalid kind '{kind}'"
                 )
-        
+
         # --------------------------
         # Boolean
         # --------------------------
@@ -245,3 +253,4 @@ def _validate_ops_semantics(model: IRLModel) -> None:
             raise IRLValidationError(
                 f"Unknown IRL op category: {cat}"
             )
+
