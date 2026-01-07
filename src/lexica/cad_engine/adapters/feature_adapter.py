@@ -104,114 +104,53 @@ def _shell(op: FeatureOp, shape) -> cq.Workplane:
 def _hole(op: FeatureOp, shape):
     params = op.params
 
-    # -------------------------------------------------
-    # Validation
-    # -------------------------------------------------
     diameter = params.get("diameter")
     depth = params.get("depth")
     through_all = params.get("through_all", False)
-    counterbore = params.get("counterbore")
-    countersink = params.get("countersink")
 
+    # --------------------------
+    # Validation
+    # --------------------------
     if not isinstance(diameter, (int, float)) or diameter <= 0:
-        raise FeatureAdapterError("Hole diameter must be a positive number")
+        raise FeatureAdapterError("Hole diameter must be positive")
 
     if not through_all:
-        if depth is None or not isinstance(depth, (int, float)) or depth <= 0:
+        if not isinstance(depth, (int, float)) or depth <= 0:
             raise FeatureAdapterError("Blind hole requires positive depth")
 
     if "face" not in params:
         raise FeatureAdapterError("Hole requires face selector")
 
-    # -------------------------------------------------
-    # Topology v1 — FACE SELECTOR (not face object)
-    # -------------------------------------------------
+    if params.get("counterbore") or params.get("countersink"):
+        raise FeatureAdapterError(
+            "Counterbore / countersink not supported yet"
+        )
+
+    # --------------------------
+    # Face resolution
+    # --------------------------
     face_sel = FaceSelector(**params["face"])
-    resolved = resolve_face(shape, face_sel)
+    face = resolve_face(shape, face_sel)
 
     cx, cy = params.get("center", (0, 0))
 
-    # -------------------------------------------------
-    # Base hole
-    # -------------------------------------------------
-    wp = cq.Workplane(obj=shape)
-
-    if isinstance(face_sel, FaceSelector):
-        dir_str = {
-            "+X": ">X",
-            "-X": "<X",
-            "+Y": ">Y",
-            "-Y": "<Y",
-            "+Z": ">Z",
-            "-Z": "<Z",
-        }[face_sel.normal]
-
-        wp = wp.faces(dir_str).workplane()
-    else:
-        raise FeatureAdapterError("Hole requires a FaceSelector")
+    # --------------------------
+    # Hole execution
+    # --------------------------
+    wp = (
+        cq.Workplane(obj=shape)
+        .faces(face)
+        .workplane()
+        .center(cx, cy)
+    )
 
     if through_all:
         result = wp.hole(diameter)
     else:
         result = wp.hole(diameter, depth)
 
-    # -------------------------------------------------
-    # Counterbore
-    # -------------------------------------------------
-    if counterbore:
-        cb_diam = counterbore.get("diameter")
-        cb_depth = counterbore.get("depth")
-
-        if not isinstance(cb_diam, (int, float)) or cb_diam <= diameter:
-            raise FeatureAdapterError(
-                "Counterbore diameter must be larger than hole diameter"
-            )
-
-        if not isinstance(cb_depth, (int, float)) or cb_depth <= 0:
-            raise FeatureAdapterError("Counterbore depth must be positive")
-
-        result = (
-            cq.Workplane(obj=result)
-            .faces(face_selector)
-            .workplane()
-            .center(cx, cy)
-            .hole(cb_diam, cb_depth)
-        )
-
-    # -------------------------------------------------
-    # Countersink
-    # -------------------------------------------------
-    if countersink:
-        cs_diam = countersink.get("diameter")
-        cs_angle = countersink.get("angle_deg")
-
-        if not isinstance(cs_diam, (int, float)) or cs_diam <= diameter:
-            raise FeatureAdapterError(
-                "Countersink diameter must be larger than hole diameter"
-            )
-
-        if not isinstance(cs_angle, (int, float)) or not (0 < cs_angle < 180):
-            raise FeatureAdapterError(
-                "Countersink angle must be between 0 and 180 degrees"
-            )
-
-        radius_diff = (cs_diam - diameter) / 2.0
-        cone_height = radius_diff / math.tan(math.radians(cs_angle / 2.0))
-
-        result = (
-            cq.Workplane(obj=result)
-            .faces(face_selector)
-            .workplane()
-            .center(cx, cy)
-            .cone(
-                height=cone_height,
-                r1=cs_diam / 2.0,
-                r2=diameter / 2.0,
-            )
-            .cut(result)
-        )
-
     return result.val()
+
 
 # ---------------------------
 # Topology selection (Level 0)
@@ -230,6 +169,11 @@ def _select_edges(wp: cq.Workplane, topo: TopoPredicate) -> cq.Workplane:
 
     elif rule == "convex":
         sel = wp.edges("|Z")  # placeholder, deterministic
+    
+    elif rule == "concave":
+        raise FeatureAdapterError(
+            "Concave edge selection is not supported yet"
+        )
 
     elif rule == "by_length_gt":
         sel = wp.edges().filter(lambda e: e.Length() > topo.value)

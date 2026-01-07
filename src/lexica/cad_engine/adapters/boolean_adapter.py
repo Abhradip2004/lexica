@@ -10,6 +10,12 @@ class BooleanAdapterError(Exception):
 
 
 def execute_boolean(op: BooleanOp, shapes: list):
+    
+    if len(shapes) < 2:
+        raise BooleanAdapterError(
+            "Boolean operation requires at least two shapes"
+        )
+
     if op.kind == BooleanKind.UNION:
         return _union(shapes)
 

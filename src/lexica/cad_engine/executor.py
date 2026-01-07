@@ -177,8 +177,8 @@ class IRLExecutor:
         input_shape = self.registry.get(src_id)
         output_shape = execute_feature(op, input_shape)
 
-        # if op.overwrite:
-        #     del self.registry._bodies[src_id]
+        if op.overwrite:
+            self.registry.kill(src_id)
 
         self.registry.set(op.writes, output_shape)
 
@@ -235,9 +235,8 @@ class IRLExecutor:
             )
 
         # --------------------------
-        # Atomic lifecycle update
+        # Transform creates a new body; source remains LIVE
         # --------------------------
-        self.registry.kill(src_id)
         self.registry.set(op.writes, output_shape)
     
     # def _resolve_pivot(self, shape, pivot):
