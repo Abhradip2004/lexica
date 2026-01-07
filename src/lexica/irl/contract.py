@@ -18,9 +18,8 @@ Key guarantees:
 - Feature ops are first-class citizens
 - Deterministic, kernel-grade semantics
 
-If an operation cannot be expressed here, it is NOT allowed in lexica.
-"""
-"""
+If an operation cannot be expressed here, it is NOT allowed in Lexica.
+
 Body Lifecycle Semantics (NON-NEGOTIABLE)
 =======================================
 
@@ -245,9 +244,23 @@ class FaceSelector:
 
 @dataclass(frozen=True)
 class Pivot:
-    face: FaceSelector
-    origin: Literal["center", "min", "max"] = "center"
+    face: Union[FaceSelector, EdgeSelector]  # extend
+    origin: Literal["center","min","max"] = "center"
+    vertex: Optional[VertexSelector] = None  # precise pt
+    
+@dataclass(frozen=True)
+class EdgeSelector:
+    """Declarative edge selector."""
+    normal: Literal["+X","-X","+Y","-Y","+Z","-Z"]  # edge normal proj
+    index: Optional[int] = None
+    length_gt: Optional[float] = None  # filter edges > length
+    length_lt: Optional[float] = None
 
+@dataclass(frozen=True)
+class VertexSelector:
+    """Declarative vertex selector."""
+    edge: EdgeSelector  # vertex on edge
+    extremum: Literal["min","max"] = "min"  # along edge param
 
 
 # ---------------------------------------------------------------------------
