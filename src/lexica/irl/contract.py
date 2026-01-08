@@ -106,27 +106,36 @@ class TopoTarget(str, Enum):
 @dataclass(frozen=True)
 class TopoPredicate:
     """
-    Topology selection.
+    Declarative topology selection.
 
-    This is intentionally limited:
-    - No stable naming
-    - No kernel object references
-    - Deterministic and stateless
-
-    Examples:
-    - all edges
-    - edges with length > X
-    - convex edges
+    This expresses *intent*, not kernel object identity.
+    Resolution must be deterministic and stateless.
     """
+
     target: TopoTarget
+
     rule: Literal[
-        "all",
-        "convex",
-        "concave",
-        "by_length_gt",
-        "by_length_lt",
+        # --------------------------
+        # Face rules (stable)
+        # --------------------------
+        "normal",        # face normal aligned with axis (+Z, -X, etc.)
+        "min",           # extremal face at minimum axis value
+        "max",           # extremal face at maximum axis value
+
+        # --------------------------
+        # Edge rules (restricted)
+        # --------------------------
+        "parallel",      # edges parallel to axis
+        "length_gt",     # edges with length > value
+        "length_lt",     # edges with length < value
     ]
-    value: Optional[float] = None
+
+    # Meaning depends on rule:
+    # - normal   → "+Z", "-X", etc.
+    # - min/max  → "X", "Y", or "Z"
+    # - parallel → "X", "Y", or "Z"
+    # - length_*→ numeric threshold
+    value: Optional[object] = None
 
 
 # ---------------------------------------------------------------------------

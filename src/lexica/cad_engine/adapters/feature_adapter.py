@@ -7,6 +7,8 @@ from cadquery import Solid
 
 from lexica.irl.contract import FeatureOp, TopoPredicate
 from lexica.cad_engine.topology.resolver import resolve_face
+from lexica.cad_engine.topology.resolver import resolve_edge
+
 from lexica.irl.contract import FaceSelector
 
 
@@ -48,30 +50,33 @@ def execute_feature(op: FeatureOp, input_shape):
 # Feature implementations
 # ---------------------------
 
-def _fillet(op: FeatureOp, shape) -> cq.Workplane:
+def _fillet(op: FeatureOp, shape):
     radius = op.params.get("radius")
-    if radius is None:
-        raise FeatureAdapterError("Fillet requires radius")
+    if not isinstance(radius, (int, float)) or radius <= 0:
+        raise FeatureAdapterError("Fillet radius must be positive")
 
-    wp = cq.Workplane(obj=shape)
+    if op.topo is None:
+        raise FeatureAdapterError("Fillet requires topology selection")
 
-    edges = _select_edges(wp, op.topo)
-    result = edges.fillet(radius)
+    edge = resolve_edge(shape, op.topo)
 
-    return result.val()
+    wp = cq.Workplane(obj=shape).newObject([edge])
+    return wp.fillet(radius).val()
 
 
-def _chamfer(op: FeatureOp, shape) -> cq.Workplane:
+def _chamfer(op: FeatureOp, shape):
     distance = op.params.get("distance")
-    if distance is None:
-        raise FeatureAdapterError("Chamfer requires distance")
+    if not isinstance(distance, (int, float)) or distance <= 0:
+        raise FeatureAdapterError("Chamfer distance must be positive")
 
-    wp = cq.Workplane(obj=shape)
+    if op.topo is None:
+        raise FeatureAdapterError("Chamfer requires topology selection")
 
-    edges = _select_edges(wp, op.topo)
-    result = edges.chamfer(distance)
+    edge = resolve_edge(shape, op.topo)
 
-    return result.val()
+    wp = cq.Workplane(obj=shape).newObject([edge])
+    return wp.chamfer(distance).val()
+
 
 def _shell(op: FeatureOp, shape) -> cq.Workplane:
     thickness = op.params.get("thickness")
@@ -180,9 +185,6 @@ def _select_edges(wp: cq.Workplane, topo: TopoPredicate) -> cq.Workplane:
 
     if rule == "all":
         sel = wp.edges()
-
-    elif rule == "convex":
-        sel = wp.edges("|Z")  # placeholder, deterministic
     
     elif rule == "concave":
         raise FeatureAdapterError(

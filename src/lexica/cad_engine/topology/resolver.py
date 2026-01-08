@@ -14,11 +14,14 @@ Semantics:
 
 import cadquery as cq
 from typing import Union, List
+
 from lexica.irl.contract import (
     FaceSelector, 
     EdgeSelector, 
     VertexSelector,
 )
+from lexica.irl.contract import TopoPredicate, TopoTarget
+
 
 # CADQUERY DIRECTION MAPPING
 # Key: IRL normal literals ("+X" etc.)
@@ -32,82 +35,185 @@ NORMAL_MAP: dict[str, str] = {
     "-Z": "<Z",   # Bottom faces
 }
 
-def resolve_face(shape: cq.Solid, selector: FaceSelector) -> cq.Face:
+def resolve_face(shape: cq.Solid, selector: FaceSelector | TopoPredicate) -> cq.Face:
     """
-    Resolve FaceSelector → single TopoDS_Face.
+    Resolve face topology intent into a single Face.
 
-    Args:
-        shape: Input solid body
-        selector: Declarative selector (normal + optional index)
+    Supports:
+    - normal-based selection
+    - extremal (min / max) selection
 
-    Raises:
-        ValueError: Invalid normal / no matches / ambiguous / bad index
-
-    Usage: FeatureOp.hole on "+Z[1]" (2nd top face)
+    Raises on:
+    - no matches
+    - ambiguous matches
     """
-    # WRAP SHAPE FOR SELECTION
+
     wp = cq.Workplane(obj=shape)
-    
-    # LOOKUP DIRECTION SELECTOR
-    dir_str = NORMAL_MAP.get(selector.normal)
-    if dir_str is None:
-        valid = "', '".join(NORMAL_MAP)
-        raise ValueError(f"Invalid normal '{selector.normal}'; use [{valid}]")
-    
-    # FILTER FACES BY NORMAL DIRECTION
-    # .vals() → List[TopoDS_Face]; empty if no match
-    faces = wp.faces(dir_str).vals()
-    if not faces:
-        raise ValueError(f"No faces match normal '{selector.normal}' on shape")
-    
-    # DISAMBIGUATE VIA INDEX
-    if selector.index is None:
-        if len(faces) > 1:
+
+    # -------------------------------------------------
+    # FaceSelector (legacy, still supported)
+    # -------------------------------------------------
+    if isinstance(selector, FaceSelector):
+        NORMAL_MAP = {
+            "+X": ">X", "-X": "<X",
+            "+Y": ">Y", "-Y": "<Y",
+            "+Z": ">Z", "-Z": "<Z",
+        }
+
+        dir_str = NORMAL_MAP.get(selector.normal)
+        if dir_str is None:
+            raise ValueError(f"Invalid face normal '{selector.normal}'")
+
+        faces = wp.faces(dir_str).vals()
+
+        if not faces:
+            raise ValueError(f"No faces match normal '{selector.normal}'")
+
+        if selector.index is None:
+            if len(faces) > 1:
+                raise ValueError(
+                    f"Ambiguous {len(faces)} faces for normal '{selector.normal}'"
+                )
+            return faces[0]
+
+        if selector.index < 0 or selector.index >= len(faces):
             raise ValueError(
-                f"Ambiguous {len(faces)} faces for '{selector.normal}'; "
-                f"specify index (0-{len(faces)-1})"
+                f"Face index {selector.index} out of range (0-{len(faces)-1})"
             )
-        return faces[0]  # Unique match
-    
-    # INDEXED ACCESS (0-based)
-    if selector.index < 0 or selector.index >= len(faces):
-        raise ValueError(
-            f"Index {selector.index} out-of-bounds for '{selector.normal}' "
-            f"(valid: 0-{len(faces)-1}, found {len(faces)} faces)"
-        )
-    
-    return faces[selector.index]  # Guaranteed single Face
 
-def resolve_edge(shape: cq.Solid, selector: EdgeSelector) -> cq.Edge:
+        return faces[selector.index]
+
+    # -------------------------------------------------
+    # TopoPredicate (Topology v2)
+    # -------------------------------------------------
+    if not isinstance(selector, TopoPredicate):
+        raise ValueError(f"Unsupported face selector type: {type(selector)}")
+
+    rule = selector.rule
+    value = selector.value
+
+    faces = wp.faces().vals()
+    if not faces:
+        raise ValueError("Shape contains no faces")
+
+    # --------------------------
+    # Normal-aligned faces
+    # --------------------------
+    if rule == "normal":
+        if value not in ("+X", "-X", "+Y", "-Y", "+Z", "-Z"):
+            raise ValueError(f"Invalid normal value '{value}'")
+
+        NORMAL_MAP = {
+            "+X": ">X", "-X": "<X",
+            "+Y": ">Y", "-Y": "<Y",
+            "+Z": ">Z", "-Z": "<Z",
+        }
+
+        matches = wp.faces(NORMAL_MAP[value]).vals()
+
+    # --------------------------
+    # Extremal faces
+    # --------------------------
+    elif rule in ("min", "max"):
+        if value not in ("X", "Y", "Z"):
+            raise ValueError(f"Invalid axis '{value}' for extremal face")
+
+        key = {
+            "X": lambda f: f.Center().x,
+            "Y": lambda f: f.Center().y,
+            "Z": lambda f: f.Center().z,
+        }[value]
+
+        faces_sorted = sorted(faces, key=key)
+        extreme_val = key(faces_sorted[0]) if rule == "min" else key(faces_sorted[-1])
+
+        matches = [
+            f for f in faces
+            if abs(key(f) - extreme_val) < 1e-6
+        ]
+
+    else:
+        raise ValueError(f"Unsupported face rule '{rule}'")
+
+    if not matches:
+        raise ValueError(f"No faces match rule '{rule}' with value '{value}'")
+
+    if len(matches) > 1:
+        raise ValueError(
+            f"Ambiguous face selection: {len(matches)} matches for rule '{rule}'"
+        )
+
+    return matches[0]
+
+def resolve_edge(shape: cq.Solid, selector: TopoPredicate) -> cq.Edge:
     """
-    EdgeSelector → single Edge (proj normal + length filter).
-    
-    e.g., longest vertical edges: normal="+Z", length_gt=10
+    Resolve edge topology intent into a single Edge.
+
+    Supports:
+    - parallel to axis
+    - length filters
     """
+
+    if selector.target != TopoTarget.EDGE:
+        raise ValueError("resolve_edge requires EDGE target")
+
     wp = cq.Workplane(obj=shape)
-    
-    # Edges perpendicular to normal (common CQ: "|Z" vertical edges)
-    dir_str = NORMAL_MAP.get(selector.normal.replace("+", "|").replace("-", "|"))  # +Z/-Z → |Z
-    if dir_str is None:
-        raise ValueError(f"Invalid edge normal '{selector.normal}'")
-    
-    sel = wp.edges(dir_str)
-    
-    # LENGTH FILTERS (deterministic)
-    if selector.length_gt is not None:
-        sel = sel.filter(lambda e: e.Length() > selector.length_gt)
-    if selector.length_lt is not None:
-        sel = sel.filter(lambda e: e.Length() < selector.length_lt)
-    
-    edges = sel.vals()
+    edges = wp.edges().vals()
+
     if not edges:
-        raise ValueError(f"No edges match {selector}")
+        raise ValueError("Shape contains no edges")
+
+    rule = selector.rule
+    value = selector.value
+
+    # --------------------------
+    # Axis-parallel edges
+    # --------------------------
+    if rule == "parallel":
+        if value not in ("X", "Y", "Z"):
+            raise ValueError(f"Invalid axis '{value}' for parallel edge")
+
+        axis_vec = {
+            "X": cq.Vector(1, 0, 0),
+            "Y": cq.Vector(0, 1, 0),
+            "Z": cq.Vector(0, 0, 1),
+        }[value]
+
+        def is_parallel(edge):
+            d = edge.tangentAt(0.5)
+            return abs(d.dot(axis_vec)) > 0.99
+
+        matches = [e for e in edges if is_parallel(e)]
+
+    # --------------------------
+    # Length filters
+    # --------------------------
+    elif rule == "length_gt":
+        matches = [e for e in edges if e.Length() > float(value)]
+
+    elif rule == "length_lt":
+        matches = [e for e in edges if e.Length() < float(value)]
     
-    idx = selector.index or 0
-    if idx < 0 or idx >= len(edges):
-        raise ValueError(f"Edge idx {idx} out-of-bounds (0-{len(edges)-1})")
-    
-    return edges[idx]
+    elif rule == "all":
+        # Legacy Topology v1 compatibility:
+        # deterministically select the longest edge
+        matches = sorted(edges, key=lambda e: e.Length(), reverse=True)
+
+    else:
+        raise ValueError(f"Unsupported edge rule '{rule}'")
+
+    if not matches:
+        raise ValueError(f"No edges match rule '{rule}'")
+
+    # Legacy Topology v1 compatibility:
+    # "all" is allowed to be ambiguous but must be deterministic
+    if rule != "all" and len(matches) > 1:
+        raise ValueError(
+            f"Ambiguous edge selection: {len(matches)} matches for rule '{rule}'"
+        )
+
+    return matches[0]
+
 
 def resolve_vertex(shape: cq.Solid, selector: VertexSelector) -> cq.Vector:
     """VertexSelector → precise Vector (edge endpoint/center)."""
