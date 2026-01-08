@@ -8,6 +8,7 @@ from cadquery import Solid
 from lexica.irl.contract import FeatureOp, TopoPredicate
 from lexica.cad_engine.topology.resolver import resolve_face
 from lexica.cad_engine.topology.resolver import resolve_edge
+from lexica.irl.contract import TopoTarget
 
 from lexica.irl.contract import FaceSelector
 
@@ -51,6 +52,14 @@ def execute_feature(op: FeatureOp, input_shape):
 # ---------------------------
 
 def _fillet(op: FeatureOp, shape):
+    """
+    Apply fillet using Topology v2 intent.
+
+    Supported topology:
+    - EDGE  → fillet a specific resolved edge
+    - FACE  → fillet all edges adjacent to a resolved face
+    """
+
     radius = op.params.get("radius")
     if not isinstance(radius, (int, float)) or radius <= 0:
         raise FeatureAdapterError("Fillet radius must be positive")
@@ -58,13 +67,44 @@ def _fillet(op: FeatureOp, shape):
     if op.topo is None:
         raise FeatureAdapterError("Fillet requires topology selection")
 
-    edge = resolve_edge(shape, op.topo)
+    # --------------------------
+    # Edge-based fillet
+    # --------------------------
+    if op.topo.target == TopoTarget.EDGE:
+        edge = resolve_edge(shape, op.topo)
 
-    wp = cq.Workplane(obj=shape).newObject([edge])
-    return wp.fillet(radius).val()
+        wp = cq.Workplane(obj=shape).newObject([edge])
+        return wp.fillet(radius).val()
+
+    # --------------------------
+    # Face-based fillet
+    # --------------------------
+    elif op.topo.target == TopoTarget.FACE:
+        face = resolve_face(shape, op.topo)
+
+        face_edges = list(face.Edges())
+        if not face_edges:
+            raise FeatureAdapterError("Selected face has no edges to fillet")
+
+        wp = cq.Workplane(obj=shape).newObject(face_edges)
+        return wp.fillet(radius).val()
+
+    else:
+        raise FeatureAdapterError(
+            f"Unsupported topology target '{op.topo.target}' for fillet"
+        )
+
 
 
 def _chamfer(op: FeatureOp, shape):
+    """
+    Apply chamfer using Topology v2 intent.
+
+    Supported topology:
+    - EDGE  → chamfer a specific resolved edge
+    - FACE  → chamfer all edges adjacent to a resolved face
+    """
+
     distance = op.params.get("distance")
     if not isinstance(distance, (int, float)) or distance <= 0:
         raise FeatureAdapterError("Chamfer distance must be positive")
@@ -72,10 +112,35 @@ def _chamfer(op: FeatureOp, shape):
     if op.topo is None:
         raise FeatureAdapterError("Chamfer requires topology selection")
 
-    edge = resolve_edge(shape, op.topo)
+    # --------------------------
+    # Edge-based chamfer
+    # --------------------------
+    if op.topo.target == TopoTarget.EDGE:
+        edge = resolve_edge(shape, op.topo)
 
-    wp = cq.Workplane(obj=shape).newObject([edge])
-    return wp.chamfer(distance).val()
+        wp = cq.Workplane(obj=shape).newObject([edge])
+        return wp.chamfer(distance).val()
+
+    # --------------------------
+    # Face-based chamfer
+    # --------------------------
+    elif op.topo.target == TopoTarget.FACE:
+        face = resolve_face(shape, op.topo)
+
+        # Extract all edges of this face
+        face_edges = list(face.Edges())
+        if not face_edges:
+            raise FeatureAdapterError("Selected face has no edges to chamfer")
+
+        wp = cq.Workplane(obj=shape).newObject(face_edges)
+        return wp.chamfer(distance).val()
+
+    else:
+        raise FeatureAdapterError(
+            f"Unsupported topology target '{op.topo.target}' for chamfer"
+        )
+
+
 
 
 def _shell(op: FeatureOp, shape) -> cq.Workplane:

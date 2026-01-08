@@ -136,6 +136,7 @@ class TopoPredicate:
     # - parallel → "X", "Y", or "Z"
     # - length_*→ numeric threshold
     value: Optional[object] = None
+    index: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------

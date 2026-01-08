@@ -11,7 +11,7 @@ __pycache__/
 *.iges
 .venv/
 venv/
-examples/
+# examples/
 outputs/
 
 test.py

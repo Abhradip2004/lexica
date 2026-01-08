@@ -185,6 +185,27 @@ def resolve_edge(shape: cq.Solid, selector: TopoPredicate) -> cq.Edge:
 
         matches = [e for e in edges if is_parallel(e)]
 
+        if not matches:
+            raise ValueError("No parallel edges found")
+
+        # Deterministic ordering (Topology v2 rule)
+        matches = sorted(
+            matches,
+            key=lambda e: (
+                round(e.Center().z, 6),
+                round(e.Length(), 6),
+            ),
+            reverse=True,
+        )
+
+        idx = selector.index or 0
+        if idx >= len(matches):
+            raise ValueError(
+                f"Edge index {idx} out of range (0-{len(matches)-1})"
+            )
+
+        return matches[idx]
+
     # --------------------------
     # Length filters
     # --------------------------
