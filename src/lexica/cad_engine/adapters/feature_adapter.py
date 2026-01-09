@@ -53,92 +53,166 @@ def execute_feature(op: FeatureOp, input_shape):
 
 def _fillet(op: FeatureOp, shape):
     """
-    Apply fillet using Topology v2 intent.
+    Apply a fillet feature using Topology v2 intent.
 
-    Supported topology:
-    - EDGE  → fillet a specific resolved edge
-    - FACE  → fillet all edges adjacent to a resolved face
+    Semantics (IR v1 / Phase 1):
+    --------------------------------
+    - Fillet ALWAYS requires topology selection
+    - EDGE + rule="all"  --> fillet ALL edges of the solid
+    - EDGE (other rules) --> fillet resolved edge
+    - FACE               --> fillet all edges adjacent to resolved face
+    - 'radius' must be a positive scalar
     """
 
+    # -------------------------------------------------
+    # Validate parameters
+    # -------------------------------------------------
     radius = op.params.get("radius")
     if not isinstance(radius, (int, float)) or radius <= 0:
-        raise FeatureAdapterError("Fillet radius must be positive")
+        raise FeatureAdapterError(
+            "Fillet requires positive 'radius'"
+        )
 
     if op.topo is None:
-        raise FeatureAdapterError("Fillet requires topology selection")
+        raise FeatureAdapterError(
+            "Fillet requires topology selection"
+        )
 
-    # --------------------------
+    # -------------------------------------------------
     # Edge-based fillet
-    # --------------------------
+    # -------------------------------------------------
     if op.topo.target == TopoTarget.EDGE:
+
+        # Special case: fillet ALL edges of the solid
+        if op.topo.rule == "all":
+            all_edges = list(shape.Edges())
+            if not all_edges:
+                raise FeatureAdapterError(
+                    "Shape has no edges to fillet"
+                )
+
+            wp = cq.Workplane(obj=shape).newObject(all_edges)
+            return wp.fillet(radius).val()
+
+        # Otherwise: resolve a specific edge
         edge = resolve_edge(shape, op.topo)
+        if edge is None:
+            raise FeatureAdapterError(
+                "Topology did not resolve to a valid edge"
+            )
 
         wp = cq.Workplane(obj=shape).newObject([edge])
         return wp.fillet(radius).val()
 
-    # --------------------------
+    # -------------------------------------------------
     # Face-based fillet
-    # --------------------------
-    elif op.topo.target == TopoTarget.FACE:
+    # -------------------------------------------------
+    if op.topo.target == TopoTarget.FACE:
         face = resolve_face(shape, op.topo)
+        if face is None:
+            raise FeatureAdapterError(
+                "Topology did not resolve to a valid face"
+            )
 
         face_edges = list(face.Edges())
         if not face_edges:
-            raise FeatureAdapterError("Selected face has no edges to fillet")
+            raise FeatureAdapterError(
+                "Selected face has no edges to fillet"
+            )
 
         wp = cq.Workplane(obj=shape).newObject(face_edges)
         return wp.fillet(radius).val()
 
-    else:
-        raise FeatureAdapterError(
-            f"Unsupported topology target '{op.topo.target}' for fillet"
-        )
+    # -------------------------------------------------
+    # Unsupported topology target
+    # -------------------------------------------------
+    raise FeatureAdapterError(
+        f"Unsupported topology target '{op.topo.target}' for fillet"
+    )
 
 
 
 def _chamfer(op: FeatureOp, shape):
     """
-    Apply chamfer using Topology v2 intent.
+    Apply a chamfer feature using Topology v2 intent.
 
-    Supported topology:
-    - EDGE  → chamfer a specific resolved edge
-    - FACE  → chamfer all edges adjacent to a resolved face
+    Semantics (IR v1 / Phase 1):
+    --------------------------------
+    - Chamfer ALWAYS requires topology selection
+    - EDGE target --> chamfer a specific resolved edge
+    - FACE target --> chamfer all edges adjacent to a resolved face
+    - 'distance' is a positive scalar value
+
+    No default behavior is inferred.
     """
 
+    # -------------------------------------------------
+    # Validate parameters
+    # -------------------------------------------------
     distance = op.params.get("distance")
     if not isinstance(distance, (int, float)) or distance <= 0:
-        raise FeatureAdapterError("Chamfer distance must be positive")
+        raise FeatureAdapterError(
+            "Chamfer requires positive 'distance'"
+        )
 
     if op.topo is None:
-        raise FeatureAdapterError("Chamfer requires topology selection")
+        raise FeatureAdapterError(
+            "Chamfer requires topology selection"
+        )
 
-    # --------------------------
+    # -------------------------------------------------
     # Edge-based chamfer
-    # --------------------------
+    # -------------------------------------------------
     if op.topo.target == TopoTarget.EDGE:
+
+        # Special case: chamfer ALL edges of the solid
+        if op.topo.rule == "all":
+            all_edges = list(shape.Edges())
+            if not all_edges:
+                raise FeatureAdapterError(
+                    "Shape has no edges to chamfer"
+                )
+
+            wp = cq.Workplane(obj=shape).newObject(all_edges)
+            return wp.chamfer(distance).val()
+
+        # Otherwise: resolve a specific edge
         edge = resolve_edge(shape, op.topo)
+        if edge is None:
+            raise FeatureAdapterError(
+                "Topology did not resolve to a valid edge"
+            )
 
         wp = cq.Workplane(obj=shape).newObject([edge])
         return wp.chamfer(distance).val()
 
-    # --------------------------
-    # Face-based chamfer
-    # --------------------------
-    elif op.topo.target == TopoTarget.FACE:
-        face = resolve_face(shape, op.topo)
 
-        # Extract all edges of this face
+    # -------------------------------------------------
+    # Face-based chamfer
+    # -------------------------------------------------
+    if op.topo.target == TopoTarget.FACE:
+        face = resolve_face(shape, op.topo)
+        if face is None:
+            raise FeatureAdapterError(
+                "Topology did not resolve to a valid face"
+            )
+
         face_edges = list(face.Edges())
         if not face_edges:
-            raise FeatureAdapterError("Selected face has no edges to chamfer")
+            raise FeatureAdapterError(
+                "Selected face has no edges to chamfer"
+            )
 
         wp = cq.Workplane(obj=shape).newObject(face_edges)
         return wp.chamfer(distance).val()
 
-    else:
-        raise FeatureAdapterError(
-            f"Unsupported topology target '{op.topo.target}' for chamfer"
-        )
+    # -------------------------------------------------
+    # Unsupported topology target
+    # -------------------------------------------------
+    raise FeatureAdapterError(
+        f"Unsupported topology target '{op.topo.target}' for chamfer"
+    )
+
 
 
 
@@ -172,69 +246,73 @@ def _shell(op: FeatureOp, shape) -> cq.Workplane:
     return result.val()
 
 def _hole(op: FeatureOp, shape):
+    """
+    Execute a hole feature (MVP / IR v1).
+
+    Semantics (LOCKED for Phase 1):
+    --------------------------------
+    - Hole is ALWAYS face-based
+    - Face selection comes ONLY from IR topology:
+        - op.topo --> explicit face selection
+        - None default top face (+Z)
+    - 'center' means 2D offset on the selected face (cx, cy)
+    - 'through_all = True' --> through hole
+    - Otherwise --> depth-based blind hole
+
+    IMPORTANT:
+    - No body-centered holes in Phase 1
+    - No inference from 'center'
+    - No mixing of CadQuery APIs
+    """
+
     params = op.params
 
+    # -------------------------------------------------
+    # Validate required parameters
+    # -------------------------------------------------
     diameter = params.get("diameter")
+    if not isinstance(diameter, (int, float)) or diameter <= 0:
+        raise FeatureAdapterError("Hole requires positive 'diameter'")
+
     depth = params.get("depth")
-    through_all = params.get("through_all", False)
+    through_all = bool(params.get("through_all", False))
 
-    counterbore = params.get("counterbore")
-    countersink = params.get("countersink")
-
-    face_sel = FaceSelector(**params["face"])
-    cx, cy = params.get("center", (0, 0))
-
-    dir_map = {
-        "+X": ">X", "-X": "<X",
-        "+Y": ">Y", "-Y": "<Y",
-        "+Z": ">Z", "-Z": "<Z",
-    }
-    dir_str = dir_map[face_sel.normal]
+    if not through_all and depth is None:
+        raise FeatureAdapterError(
+            "Hole requires 'depth' unless 'through_all' is True"
+        )
 
     # -------------------------------------------------
-    # SINGLE workplane 
+    # Resolve target face
     # -------------------------------------------------
-    wp = (
-        cq.Workplane(obj=shape)
-        .faces(dir_str)
-        .workplane()
-        .center(cx, cy)
-    )
+    if op.topo is not None:
+        # Topology-driven face selection (preferred)
+        face = resolve_face(shape, op.topo)
+        wp = cq.Workplane(obj=shape).newObject([face]).workplane()
+    else:
+        # Default: top face (+Z)
+        wp = (
+            cq.Workplane(obj=shape)
+            .faces(">Z")
+            .workplane()
+        )
 
     # -------------------------------------------------
-    # Base hole
+    # Apply 2D center offset (on face)
+    # -------------------------------------------------
+    cx, cy = params.get("center", (0.0, 0.0))
+    wp = wp.center(cx, cy)
+
+    # -------------------------------------------------
+    # Create hole (single, consistent API)
     # -------------------------------------------------
     if through_all:
         wp = wp.hole(diameter)
     else:
         wp = wp.hole(diameter, depth)
 
-    # -------------------------------------------------
-    # Counterbore (same workplane!)
-    # -------------------------------------------------
-    if counterbore:
-        wp = wp.hole(
-            counterbore["diameter"],
-            counterbore["depth"],
-        )
-
-    # -------------------------------------------------
-    # Countersink (same workplane!)
-    # -------------------------------------------------
-    if countersink:
-        cs_d = countersink["diameter"]
-        cs_angle = countersink["angle_deg"]
-
-        radius_diff = (cs_d - diameter) / 2.0
-        cone_height = radius_diff / math.tan(math.radians(cs_angle / 2.0))
-
-        wp = wp.cone(
-            height=cone_height,
-            r1=cs_d / 2.0,
-            r2=diameter / 2.0,
-        ).cut(wp)
-
     return wp.val()
+
 
 # ---------------------------
 # Topology selection (Level 0)

@@ -29,23 +29,50 @@ def execute_primitive(op: PrimitiveOp):
 
 
 def _box(op: PrimitiveOp):
+    """
+    Create a box primitive.
+
+    IR v1 contract:
+    - x --> size along X axis
+    - y --> size along Y axis
+    - z --> size along Z axis
+
+    Validation guarantees presence of x, y, z.
+    """
+
     try:
-        length = op.params["length"]
-        width = op.params["width"]
-        height = op.params["height"]
+        x = op.params["x"]  # X axis
+        y = op.params["y"]  # Y axis
+        z = op.params["z"]  # Z axis
     except KeyError as e:
-        raise PrimitiveAdapterError(f"Missing box param: {e}")
+        raise PrimitiveAdapterError(
+            f"Missing box param: {e}. "
+            "Required params are 'x', 'y', 'z'."
+        )
 
-    wp = cq.Workplane("XY").box(length, width, height)
+    wp = cq.Workplane("XY").box(x, y, z)
     return wp.val()
-
 
 def _cylinder(op: PrimitiveOp):
-    try:
-        radius = op.params["radius"]
-        height = op.params["height"]
-    except KeyError as e:
-        raise PrimitiveAdapterError(f"Missing cylinder param: {e}")
+    """
+    Create a cylinder primitive.
 
-    wp = cq.Workplane("XY").circle(radius).extrude(height)
+    IR v1 contract:
+    - r --> radius in XY plane
+    - z --> height along Z axis
+
+    Validation guarantees presence of r and z.
+    """
+
+    try:
+        r = op.params["r"]   # radius
+        z = op.params["z"]   # height along Z
+    except KeyError as e:
+        raise PrimitiveAdapterError(
+            f"Missing cylinder param: {e}. "
+            "Required params are 'r' and 'z'."
+        )
+
+    wp = cq.Workplane("XY").circle(r).extrude(z)
     return wp.val()
+

@@ -34,10 +34,16 @@ from lexica.pipeline.nl_to_ir.schema import (
     TopologyTarget,
 )
 
-from lexica.irl.contract import (
-    TopoPredicate,
-    TopoTarget,
+# from lexica.irl.contract import (
+#     TopoPredicate,
+#     TopoTarget,
+# )
+
+from lexica.pipeline.nl_to_ir.schema import (
+    TopologyIntent,
+    TopologyTarget,
 )
+
 
 
 
@@ -102,11 +108,32 @@ def _validate_ops_semantics(model: IRModel) -> None:
             _require_params(
                 op,
                 required={
-                    PrimitiveKind.BOX: {"length", "width", "height"},
-                    PrimitiveKind.CYLINDER: {"radius", "height"},
+                    PrimitiveKind.BOX: {"x", "y", "z"},
+                    PrimitiveKind.CYLINDER: {"r", "z"},
                 }[op.primitive_kind],
                 idx=idx,
             )
+            
+            # -------------------------------------------------
+            # Reject legacy dimension names (IR v1 lock)
+            # -------------------------------------------------
+            if op.primitive_kind == PrimitiveKind.BOX:
+                forbidden = {"width", "height", "depth", "length"}
+                illegal = forbidden & set(op.params.keys())
+                if illegal:
+                    raise IRValidationError(
+                        f"Primitive BOX uses invalid params {illegal}. "
+                        "Use 'x', 'y', 'z' instead."
+                    )
+            
+            if op.primitive_kind == PrimitiveKind.CYLINDER:
+                forbidden = {"radius", "height"}
+                illegal = forbidden & set(op.params.keys())
+                if illegal:
+                    raise IRValidationError(
+                        f"Primitive CYLINDER uses invalid params {illegal}. "
+                        "Use 'r' and 'z' instead."
+                    )
 
         # --------------------------
         # Transform
@@ -282,15 +309,15 @@ def _require_params(op: IROp, required: Set[str], idx: int) -> None:
         )
 
 
-def _validate_topology(topo: TopoPredicate, idx: int):
+def _validate_topology(topo: TopologyIntent, idx: int):
     """
-    Validate topology intent against Topology v2 contract.
+    Validate IR-level topology intent (LLM-facing).
     """
 
     if topo is None:
         return
 
-    if not isinstance(topo, TopoPredicate):
+    if not isinstance(topo, TopologyIntent):
         raise IRValidationError(
             f"Topology intent in op {idx} is invalid"
         )
@@ -298,63 +325,35 @@ def _validate_topology(topo: TopoPredicate, idx: int):
     # --------------------------
     # Target validation
     # --------------------------
-    if topo.target not in (TopoTarget.FACE, TopoTarget.EDGE):
+    if topo.target not in (TopologyTarget.EDGE, TopologyTarget.FACE):
         raise IRValidationError(
             f"Unsupported topology target '{topo.target}' in op {idx}"
         )
 
     # --------------------------
-    # Face rules
-    # --------------------------
-    if topo.target == TopoTarget.FACE:
-        if topo.rule not in ("normal", "min", "max"):
-            raise IRValidationError(
-                f"Invalid face topology rule '{topo.rule}' in op {idx}"
-            )
-
-        if topo.rule == "normal":
-            if topo.value not in ("+X", "-X", "+Y", "-Y", "+Z", "-Z"):
-                raise IRValidationError(
-                    f"Invalid face normal '{topo.value}' in op {idx}"
-                )
-
-        if topo.rule in ("min", "max"):
-            if topo.value not in ("X", "Y", "Z"):
-                raise IRValidationError(
-                    f"Invalid axis '{topo.value}' in op {idx}"
-                )
-
-    # --------------------------
     # Edge rules
     # --------------------------
-    elif topo.target == TopoTarget.EDGE:
+    if topo.target == TopologyTarget.EDGE:
         if topo.rule not in (
+            "all",
             "parallel",
             "length_gt",
             "length_lt",
-            "all",        # legacy compatibility
         ):
             raise IRValidationError(
                 f"Invalid edge topology rule '{topo.rule}' in op {idx}"
             )
 
-        if topo.rule == "parallel":
-            if topo.value not in ("X", "Y", "Z"):
-                raise IRValidationError(
-                    f"Invalid axis '{topo.value}' in op {idx}"
-                )
-
-        if topo.rule in ("length_gt", "length_lt"):
-            if not isinstance(topo.value, (int, float)):
-                raise IRValidationError(
-                    f"Invalid length value '{topo.value}' in op {idx}"
-                )
-    
     # --------------------------
-    # Index validation (Topology v2)
+    # Face rules
     # --------------------------
-    if topo.index is not None:
-        if not isinstance(topo.index, int) or topo.index < 0:
+    if topo.target == TopologyTarget.FACE:
+        if topo.rule not in (
+            "normal",
+            "min",
+            "max",
+        ):
             raise IRValidationError(
-                f"Invalid topology index '{topo.index}' in op {idx}"
+                f"Invalid face topology rule '{topo.rule}' in op {idx}"
             )
+

@@ -16,6 +16,9 @@ This module:
 
 from __future__ import annotations
 
+import requests
+import time
+
 import json
 from typing import Optional
 
@@ -40,8 +43,11 @@ from lexica.pipeline.nl_to_ir.validate import validate_ir, IRValidationError
 # Configuration
 # ---------------------------------------------------------------------------
 
-MAX_RETRIES = 3
+OLLAMA_URL = "http://localhost:11434/api/generate"
+MODEL_NAME = "qwen2.5:7b-instruct"
 
+MAX_RETRIES = 3
+RETRY_BACKOFF_SEC = 0.5
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -54,6 +60,19 @@ class TranslationError(Exception):
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
+
+def _normalize_ir(model):
+    for op in model.ops:
+        if hasattr(op, "topology") and op.topology is not None:
+            topo = op.topology
+
+            # Only allow edge/face + rule
+            allowed_keys = {"target", "rule"}
+
+            # Drop topology if it contains unexpected fields
+            if not all(k in allowed_keys for k in topo.__dict__.keys()):
+                op.topology = None
+
 
 def nl_to_ir(prompt: str, *, debug: bool = False) -> IRModel:
     """
@@ -81,13 +100,26 @@ def nl_to_ir(prompt: str, *, debug: bool = False) -> IRModel:
         try:
             ir_dict = _parse_json(raw_output)
             ir_model = _dict_to_ir(ir_dict)
+            # _normalize_ir(ir_model)
+            
+            for i, op in enumerate(ir_model.ops):
+                print(f"[DEBUG] op {i} topology =", getattr(op, "topology", None))
+            
             validate_ir(ir_model)
             return ir_model
 
         except (json.JSONDecodeError, IRValidationError, ValueError) as e:
             last_error = str(e)
+
+            print("\n================ RAW LLM OUTPUT ================\n")
+            print(raw_output)
+            print("\n================================================\n")
+
             if debug:
-                print(f"[translator] Validation failed: {last_error}")
+                print(f"[translator] Validation failed (attempt {attempt}): {last_error}")
+
+            time.sleep(RETRY_BACKOFF_SEC)
+
 
     raise TranslationError(
         f"Failed to generate valid IR after {MAX_RETRIES} attempts.\n"
@@ -110,47 +142,46 @@ def nl_to_ir(prompt: str, *, debug: bool = False) -> IRModel:
 
 def call_llm(*, system_prompt: str, user_prompt: str) -> str:
     """
-    Mock LLM backend for deterministic testing.
+    Call local Qwen via Ollama.
+    Returns raw text output.
     """
 
-    text = user_prompt.lower()
+    prompt = f"{system_prompt}\n\n{user_prompt}".strip()
 
-    # Test case: box → translate → rotate → fillet → export
-    if "box" in text and "fillet" in text:
-        return """
-        {
-        "ops": [
-            {
-            "kind": "primitive",
-            "primitive_kind": "box",
-            "params": { "length": 40, "width": 30, "height": 20 }
-            },
-            {
-            "kind": "transform",
-            "transform_kind": "translate",
-            "params": { "dx": 25, "dy": 0, "dz": 0 }
-            },
-            {
-            "kind": "transform",
-            "transform_kind": "rotate",
-            "params": { "axis": "z", "angle_deg": 45 }
-            },
-            {
-            "kind": "feature",
-            "feature_kind": "fillet",
-            "params": { "radius": 2.5 },
-            "topology": { "target": "edge", "rule": "all" }
-            },
-            {
-            "kind": "export",
-            "format": "step",
-            "path": "mock_llm_output.step"
-            }
-        ]
-        }
-        """
+    payload = {
+        "model": MODEL_NAME,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "temperature": 0.0,
+            "top_p": 0.9,
+            "repeat_penalty": 1.1,
+            "num_predict": 512,
+            "stop": [
+                "```",
+                "Explanation:",
+                "<think>",
+            ],
+        },
+    }
 
-    raise RuntimeError("Mock LLM received unknown prompt")
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json=payload,
+            timeout=180,
+        )
+        response.raise_for_status()
+    except Exception as e:
+        raise TranslationError(f"LLM backend error: {e}")
+
+    data = response.json()
+
+    if "response" not in data:
+        raise TranslationError("Malformed response from LLM backend")
+
+    return data["response"].strip()
+
 
 
 # ---------------------------------------------------------------------------
@@ -159,22 +190,118 @@ def call_llm(*, system_prompt: str, user_prompt: str) -> str:
 
 def _system_prompt() -> str:
     return (
-        "You are a CAD intent compiler for a system called lexica.\n\n"
-        "Your job is to convert natural language descriptions of 3D models\n"
-        "into a JSON Intermediate Representation (IR).\n\n"
-        "CRITICAL RULES:\n"
+        "You are a deterministic compiler frontend for a CAD system called Lexica.\n\n"
+        "Your task is to convert natural language descriptions into a JSON "
+        "Intermediate Representation (IR).\n\n"
+
+        "====================\n"
+        "ABSOLUTE RULES\n"
+        "====================\n"
         "1. Output ONLY valid JSON.\n"
-        "2. Follow the lexica IR schema exactly.\n"
-        "3. Do NOT output explanations, comments, or markdown.\n"
-        "4. Do NOT output CAD or kernel code.\n"
-        "5. Do NOT invent operations.\n"
-        "6. Use explicit numeric parameters.\n"
-        "7. Assume operations apply to the most recent body.\n"
-        "8. If ambiguous, choose the simplest valid interpretation.\n\n"
-        "Output format:\n"
+        "2. Do NOT include explanations, comments, markdown, or extra text.\n"
+        "3. The output MUST be parseable by json.loads().\n"
+        "4. Follow the Lexica IR schema EXACTLY.\n"
+        "5. Never invent new fields, operations, or enum values.\n"
+        "6. If something is ambiguous, choose the simplest valid interpretation.\n\n"
+
+        "====================\n"
+        "IR OPERATION KINDS\n"
+        "====================\n"
+        "The field \"kind\" MUST be one of the following values ONLY:\n"
+        "- \"primitive\"\n"
+        "- \"transform\"\n"
+        "- \"feature\"\n"
+        "- \"boolean\"\n"
+        "- \"export\"\n\n"
+
+        "====================\n"
+        "IMPORTANT SEMANTIC RULES\n"
+        "====================\n"
+        "- Primitives create geometry (e.g. box, cylinder).\n"
+        "- Features modify existing geometry (e.g. fillet, chamfer, hole).\n"
+        "- Transforms move or rotate geometry.\n"
+        "- Booleans combine multiple bodies.\n\n"
+
+        "- Topology is ONLY used for selecting edges or faces.\n"
+        "- Valid topology targets are ONLY \"edge\" or \"face\".\n"
+        "- Positioning concepts like \"center\" are NOT topology.\n"
+        "- Positioning such as \"center\" belongs inside params.\n"
+        "- Hole features NEVER use topology.\n"
+        "- If a feature does not require topology, OMIT the topology field entirely.\n\n"
+
+        "====================\n"
+        "TOPOLOGY FORMAT (STRICT)\n"
+        "====================\n"
+        "If a feature uses topology, the topology field MUST have EXACTLY this shape:\n"
+        "{\n"
+        "  \"target\": \"edge\" | \"face\",\n"
+        "  \"rule\": \"all\" | \"normal\" | \"min\" | \"max\" | "
+        "\"parallel\" | \"length_gt\" | \"length_lt\"\n"
+        "}\n"
+        "Do NOT include extra fields such as index, value, center, position, or axis.\n\n"
+
+        "====================\n"
+        "IR SCHEMA EXAMPLES\n"
+        "====================\n"
+
+        "Input:\n"
+        "\"Create a box of width 10 height 20 length 30\"\n\n"
+        "Output:\n"
+        "{\n"
+        "  \"ops\": [\n"
+        "    {\n"
+        "      \"kind\": \"primitive\",\n"
+        "      \"primitive_kind\": \"box\",\n"
+        "      \"params\": {\n"
+        "        \"width\": 10,\n"
+        "        \"height\": 20,\n"
+        "        \"length\": 30\n"
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+
+        "Input:\n"
+        "\"Make a hole in the center with diameter 6\"\n\n"
+        "Output:\n"
+        "{\n"
+        "  \"ops\": [\n"
+        "    {\n"
+        "      \"kind\": \"feature\",\n"
+        "      \"feature_kind\": \"hole\",\n"
+        "      \"params\": {\n"
+        "        \"diameter\": 6,\n"
+        "        \"through_all\": true,\n"
+        "        \"center\": [0, 0]\n"
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+
+        "Input:\n"
+        "\"Chamfer all edges by 2\"\n\n"
+        "Output:\n"
+        "{\n"
+        "  \"ops\": [\n"
+        "    {\n"
+        "      \"kind\": \"feature\",\n"
+        "      \"feature_kind\": \"chamfer\",\n"
+        "      \"params\": {\n"
+        "        \"distance\": 2\n"
+        "      },\n"
+        "      \"topology\": {\n"
+        "        \"target\": \"edge\",\n"
+        "        \"rule\": \"all\"\n"
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+
+        "====================\n"
+        "FINAL OUTPUT FORMAT\n"
+        "====================\n"
         "{ \"ops\": [ ... ] }"
     )
-
 
 def _user_prompt(user_text: str) -> str:
     return (
@@ -185,11 +312,17 @@ def _user_prompt(user_text: str) -> str:
 
 def _repair_prompt(user_text: str, error: str) -> str:
     return (
-        "The previous output was invalid.\n\n"
-        f"Validation error:\n{error}\n\n"
-        "Regenerate the full IR JSON correctly.\n\n"
-        f"Original description:\n{user_text}"
+        "The previous JSON output was INVALID and rejected by the compiler.\n\n"
+        "Compiler error:\n"
+        f"{error}\n\n"
+        "You MUST output a FULL corrected IR JSON.\n"
+        "Follow the Lexica IR schema EXACTLY.\n"
+        "Do NOT explain anything.\n"
+        "Do NOT include text outside JSON.\n\n"
+        "Original description:\n"
+        f"{user_text}"
     )
+
 
 
 # ---------------------------------------------------------------------------
