@@ -1,0 +1,7 @@
+{
+  "messages": [
+    { "role": "system", "content": "You are Orbit v1..." },
+    { "role": "user", "content": "Create a 30 by 30 by 30 box" },
+    { "role": "assistant", "content": "{\"ops\":[{\"kind\":\"primitive\",\"primitive_kind\":\"box\",\"params\":{\"x\":30,\"y\":30,\"z\":30}}]}" }
+  ]
+}

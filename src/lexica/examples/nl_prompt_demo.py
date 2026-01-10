@@ -81,21 +81,21 @@ def test_box_with_through_hole():
 # Test 3: Box + Chamfer All Edges
 # --------------------------------------------------
 
-# def test_box_chamfer_all_edges():
-#     return IRModel(ops=[
-#         PrimitiveOp(
-#             primitive_kind=PrimitiveKind.BOX,
-#             params={"x": 30, "y": 30, "z": 30},
-#         ),
-#         FeatureOp(
-#             feature_kind=FeatureKind.CHAMFER,
-#             params={"distance": 2},
-#             topology=TopologyIntent(
-#                 target=TopologyTarget.EDGE,
-#                 rule="all",
-#             ),
-#         )
-#     ])
+def test_box_chamfer_all_edges():
+    return IRModel(ops=[
+        PrimitiveOp(
+            primitive_kind=PrimitiveKind.BOX,
+            params={"x": 30, "y": 30, "z": 30},
+        ),
+        FeatureOp(
+            feature_kind=FeatureKind.CHAMFER,
+            params={"distance": 2},
+            topology=TopologyIntent(
+                target=TopologyTarget.EDGE,
+                rule="all",
+            ),
+        )
+    ])
 
 
 # --------------------------------------------------
