@@ -152,9 +152,9 @@ def test_shaft_collar():
 if __name__ == "__main__":
     # run_test("1. Basic Box", test_basic_box())
     # run_test("2. Box with Top Through Hole", test_box_with_through_hole())
-    # run_test("3. Box with Chamfered Edges", test_box_chamfer_all_edges())
+    run_test("3. Box with Chamfered Edges", test_box_chamfer_all_edges())
     # run_test("4. Simple Cylinder (Shaft)", test_simple_cylinder())
-    run_test("5. Shaft Collar", test_shaft_collar())
+    # run_test("5. Shaft Collar", test_shaft_collar())
 
     # print("\n" + "=" * 60)
     # print("ALL TESTS COMPLETED")

@@ -11,7 +11,8 @@ NUM_SAMPLES = 600   # good starting point
 
 SYSTEM_PROMPT = (
     Path(__file__)
-    .parents[2]
+    .parents[1]
+    /"prompts"
     / "system.txt"
 ).read_text().strip()
 

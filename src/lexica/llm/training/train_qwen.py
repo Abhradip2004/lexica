@@ -25,7 +25,7 @@ DATASET_PATH = (
     / "lexica"
     / "llm"
     / "dataset"
-    / "box_primitives.jsonl"
+    / "box_plus_features.jsonl"
 )
 
 OUTPUT_DIR = (

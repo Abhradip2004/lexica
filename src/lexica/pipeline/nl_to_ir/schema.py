@@ -17,7 +17,7 @@ If the LLM cannot express something here, it is not supported.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Any, Optional
 from enum import Enum
 
@@ -168,4 +168,11 @@ class IRModel:
     """
     High-level IR program emitted by the LLM.
     """
-    ops: List[IROp]
+    ops: List["IROp"]
+
+    def to_dict(self) -> dict:
+        """
+        Serialize IRModel into plain Python dict.
+        Safe for JSON, tests, UI, and logging.
+        """
+        return asdict(self)
