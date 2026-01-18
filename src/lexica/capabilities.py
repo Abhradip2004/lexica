@@ -19,6 +19,9 @@ def get_capabilities() -> Dict[str, List[Capability]]:
         "primitives": [
             Capability("box", True),
             Capability("cylinder", True),
+            Capability("sphere", True),
+            Capability("cone", True),
+            Capability("torus", True),
         ],
         "features": [
             Capability("fillet", True, "Edge-based fillet"),
