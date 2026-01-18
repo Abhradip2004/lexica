@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import torch
@@ -20,25 +21,16 @@ BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 
-DATASET_PATH = (
-    BASE_DIR
-    / "lexica"
-    / "llm"
-    / "dataset"
-    / "box_plus_features.jsonl"
-)
+TRAIN_PATH = BASE_DIR / "lexica" / "llm" / "dataset" / "train.jsonl"
+EVAL_PATH  = BASE_DIR / "lexica" / "llm" / "dataset" / "eval.jsonl"
 
-OUTPUT_DIR = (
-    BASE_DIR
-    / "lexica"
-    / "llm"
-    / "checkpoints"
-    / "qwen-box"
-)
+# This must match inference loaders:
+# - load_model.py expects lexica/llm/artifacts/lexica-ir-v1-lora
+# - qwen_local.py expects lexica/llm/artifacts/lexica-ir-v1-lora
+OUTPUT_DIR = BASE_DIR / "lexica" / "llm" / "artifacts" / "lexica-ir-v1-lora"
 
 MAX_SEQ_LEN = 1024
 
-# CPU-safe
 torch.set_num_threads(4)
 
 
@@ -50,6 +42,9 @@ def load_jsonl_dataset(path: Path) -> list[dict]:
     records = []
     with path.open("r") as f:
         for line in f:
+            line = line.strip()
+            if not line:
+                continue
             records.append(json.loads(line))
     return records
 
@@ -83,11 +78,8 @@ def tokenize_fn(tokenizer, example):
         max_length=MAX_SEQ_LEN,
         padding=False,
     )
-
     tokens["labels"] = tokens["input_ids"].copy()
-
     return tokens
-
 
 
 # -------------------------------------------------
@@ -95,16 +87,22 @@ def tokenize_fn(tokenizer, example):
 # -------------------------------------------------
 
 def main():
-    print("[train] loading dataset...")
-    train_ds = build_dataset(DATASET_PATH)
+    # Optional: force offline to avoid HF read timeouts
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
-    print("[train] dataset size:", len(train_ds))
+    print("[train] loading datasets...")
+    train_ds = build_dataset(TRAIN_PATH)
+    eval_ds = build_dataset(EVAL_PATH)
+
+    print("[train] train size:", len(train_ds))
+    print("[train] eval size :", len(eval_ds))
     print("[train] sample:\n", train_ds[0]["text"][:400], "...")
 
     print("[train] loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(
         BASE_MODEL,
         trust_remote_code=True,
+        local_files_only=True,
     )
 
     if tokenizer.pad_token is None:
@@ -114,8 +112,9 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         torch_dtype=torch.float32,
-        device_map=None,
+        device_map=None,  # CPU
         trust_remote_code=True,
+        local_files_only=True,
     )
 
     print("[train] applying LoRA...")
@@ -127,7 +126,6 @@ def main():
         bias="none",
         task_type="CAUSAL_LM",
     )
-
     model = get_peft_model(model, lora_cfg)
     model.print_trainable_parameters()
 
@@ -136,19 +134,23 @@ def main():
         lambda x: tokenize_fn(tokenizer, x),
         remove_columns=["text"],
     )
+    eval_ds = eval_ds.map(
+        lambda x: tokenize_fn(tokenizer, x),
+        remove_columns=["text"],
+    )
 
     training_args = TrainingArguments(
         output_dir=str(OUTPUT_DIR),
         overwrite_output_dir=True,
 
-        num_train_epochs=1,
+        num_train_epochs=2,
         per_device_train_batch_size=1,
-        gradient_accumulation_steps=1,
+        gradient_accumulation_steps=4,
 
         learning_rate=2e-4,
 
-        logging_steps=1,
-        save_steps=50,
+        logging_steps=10,
+        save_steps=100,
         save_total_limit=1,
 
         fp16=False,
@@ -156,12 +158,15 @@ def main():
 
         report_to="none",
         remove_unused_columns=False,
+        evaluation_strategy="steps",
+        eval_steps=100,
     )
 
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_ds,
+        eval_dataset=eval_ds,
         tokenizer=tokenizer,
     )
 
@@ -169,9 +174,11 @@ def main():
     trainer.train()
 
     print("[train] saving adapter...")
-    trainer.save_model()
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    trainer.save_model(str(OUTPUT_DIR))
 
     print("[train] done.")
+    print("[train] adapter saved to:", OUTPUT_DIR)
 
 
 if __name__ == "__main__":

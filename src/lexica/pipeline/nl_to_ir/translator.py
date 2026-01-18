@@ -8,6 +8,7 @@ from lexica.pipeline.nl_to_ir.schema import IRModel
 from lexica.pipeline.nl_to_ir.validate import validate_ir
 # from lexica.pipeline.nl_to_ir.errors import TranslationError
 from lexica.llm.inference.qwen_local import generate
+# from lexica.llm.postprocess import semantic_rewrite_ir_dict
 
 
 # -------------------------------------------------
@@ -38,10 +39,12 @@ def nl_to_ir(user_input: str, debug: bool = False) -> IRModel:
     Convert natural language input into a validated Lexica IRModel.
 
     Strategy:
-    1. Ask LLM to emit IR
-    2. If output already looks like IR → normalize + validate
-    3. Otherwise → fallback intent mapper (minimal, safe)
+    1. Ask Orbit to emit IR JSON
+    2. If JSON looks like IR: apply semantic rewrite (LLM repair) -> normalize -> validate
+    3. Otherwise fallback intent mapper (minimal, safe)
     """
+
+    from lexica.llm.postprocess import semantic_rewrite_ir_dict
 
     last_error: str | None = None
 
@@ -51,45 +54,61 @@ def nl_to_ir(user_input: str, debug: bool = False) -> IRModel:
             raw_output = generate(prompt)
 
             if debug:
+                print(f"[translator] attempt {attempt}/{MAX_RETRIES}")
                 print("[translator] raw output:")
                 print(raw_output)
 
             json_text = _extract_first_json(raw_output)
 
             if debug:
-                print("RAW JSON TEXT:\n", json_text)
+                print("[translator] extracted JSON text:")
+                print(json_text)
 
             data = json.loads(json_text)
 
             # -------------------------------------------------
             # Semantic gate
             # -------------------------------------------------
-
             if not _looks_like_ir(data):
                 if debug:
-                    print("[translator] non-IR output detected, using fallback")
+                    print("[translator] non-IR output detected, using fallback intent mapper")
                 return _fallback_intent_to_ir(user_input)
 
             # -------------------------------------------------
-            # IR path
+            # Semantic rewrite (LLM repair layer)
             # -------------------------------------------------
+            data, rewrite_report = semantic_rewrite_ir_dict(data)
 
+            if debug and rewrite_report.changed:
+                print("[translator] semantic rewrite applied:")
+                for ev in rewrite_report.events:
+                    print(f"  - {ev.path}: {ev.before} -> {ev.after} ({ev.reason})")
+
+            # -------------------------------------------------
+            # Normalize + validate (kernel strict contract)
+            # -------------------------------------------------
             data = normalize_ir(data)
             ir = IRModel(**data)
             validate_ir(ir)
 
             return ir
 
-        except Exception as e:
+        except TranslationError as e:
+            # Known translation failure: retry
             last_error = str(e)
             if debug:
-                print(f"[translator] attempt {attempt} failed: {last_error}")
+                print(f"[translator] attempt {attempt} failed (TranslationError): {last_error}")
+
+        except Exception as e:
+            # Unknown error: retry but keep message
+            last_error = str(e)
+            if debug:
+                print(f"[translator] attempt {attempt} failed (Exception): {last_error}")
 
     raise TranslationError(
         f"Failed to generate valid IR after {MAX_RETRIES} attempts. "
         f"Last error: {last_error}"
     )
-
 
 # -------------------------------------------------
 # Prompting

@@ -25,7 +25,7 @@ from lexica.pipeline.nl_to_ir.schema import (
     FeatureKind,
     TransformKind,
     BooleanKind,
-    ExportKind,
+    ExportOp,
 )
 
 class IRValidationError(Exception):
@@ -295,18 +295,20 @@ def _validate_export_ops(model: IRModel) -> None:
     """
     Validate export operations.
 
-    Export ops determine how geometry is written out (STEP/STL/etc.). This check
-    validates the export_kind enum presence/type. If export params are expanded
-    (e.g., file path, format), additional required-param validation should be
-    added.
+    ExportOp currently uses `format` (string), not an enum `export_kind`.
     """
-
     for idx, op in enumerate(model.ops):
         if op.kind != IROpKind.EXPORT:
             continue
 
-        if not hasattr(op, "export_kind"):
-            raise IRValidationError(f"Export op {idx} missing export_kind")
+        if not hasattr(op, "format"):
+            raise IRValidationError(f"Export op {idx} missing format")
 
-        if not isinstance(op.export_kind, ExportKind):
-            raise IRValidationError(f"Export op {idx} invalid export_kind")
+        if not isinstance(op.format, str):
+            raise IRValidationError(f"Export op {idx} format must be a string")
+
+        if op.format.strip().lower() not in {"step"}:
+            raise IRValidationError(
+                f"Export op {idx} unsupported format: {op.format}. Supported: step"
+            )
+

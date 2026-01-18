@@ -109,52 +109,58 @@ def _sphere(op: PrimitiveOp) -> cq.Workplane:
     
 def _cone(op: PrimitiveOp) -> cq.Workplane:
     """
-    Create a cone primitive.
+    Create a cone/frustum using OCC solid primitive.
 
-    IR v1 contract:
-    - r1 --> base radius (bottom)
-    - r2 --> top radius
-    - z  --> height along Z axis
-
-    If r2 is 0, it is a true cone.
-    Validation should guarantee presence of r1, r2, z.
+    Params:
+      - r1: base radius
+      - r2: top radius
+      - z:  height
     """
-
     try:
-        r1 = op.params["r1"]  # base radius
-        r2 = op.params["r2"]  # top radius
-        z  = op.params["z"]   # height
+        r1 = float(op.params["r1"])
+        r2 = float(op.params["r2"])
+        z  = float(op.params["z"])
     except KeyError as e:
         raise PrimitiveAdapterError(
-            f"Missing cone param: {e}. "
-            "Required params are 'r1', 'r2', and 'z'."
+            f"Missing cone param: {e}. Required params are 'r1', 'r2', and 'z'."
         )
 
-    # CadQuery supports cone(height, radius1, radius2)
-    wp = cq.Workplane("XY").cone(z, r1, r2)
-    return wp.val()
+    if z <= 0:
+        raise PrimitiveAdapterError("Cone height z must be > 0")
+    if r1 < 0 or r2 < 0:
+        raise PrimitiveAdapterError("Cone radii r1/r2 must be >= 0")
+    if r1 == 0 and r2 == 0:
+        raise PrimitiveAdapterError("Invalid cone: r1 and r2 both 0")
+
+    solid = cq.Solid.makeCone(r1, r2, z)
+    return cq.Workplane("XY").newObject([solid]).val()
+
+
+
 
     
 def _torus(op: PrimitiveOp) -> cq.Workplane:
     """
-    Create a torus primitive (donut).
+    Create a solid torus using OCC solid primitive.
 
-    IR v1 contract:
-    - R --> major radius (distance from center to tube center)
-    - r --> minor radius (tube radius)
-
-    Validation should guarantee presence of R and r.
+    Params:
+      - R: major radius
+      - r: minor radius
     """
-
     try:
-        R = op.params["R"]  # major radius
-        r = op.params["r"]  # minor radius
+        R = float(op.params["R"])
+        r = float(op.params["r"])
     except KeyError as e:
         raise PrimitiveAdapterError(
-            f"Missing torus param: {e}. "
-            "Required params are 'R' and 'r'."
+            f"Missing torus param: {e}. Required params are 'R' and 'r'."
         )
 
-    # Guaranteed method: revolve a circle around Z axis
-    wp = cq.Workplane("XY").center(R, 0).circle(r).revolve(360)
-    return wp.val()
+    if R <= 0 or r <= 0:
+        raise PrimitiveAdapterError("Torus radii must be > 0")
+    if r >= R:
+        raise PrimitiveAdapterError("Invalid torus: must satisfy r < R")
+
+    solid = cq.Solid.makeTorus(R, r)
+    return cq.Workplane("XY").newObject([solid]).val()
+
+
