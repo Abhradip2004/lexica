@@ -24,11 +24,20 @@ def execute_primitive(op: PrimitiveOp):
 
     if kind == "cylinder":
         return _cylinder(op)
+    
+    if kind == "sphere":
+        return _sphere(op)
+    
+    if kind == "cone":
+        return _cone(op)
+
+    if kind == "torus":
+        return _torus(op)
 
     raise PrimitiveAdapterError(f"Unknown primitive kind: {kind}")
 
 
-def _box(op: PrimitiveOp):
+def _box(op: PrimitiveOp) -> cq.Workplane:
     """
     Create a box primitive.
 
@@ -53,7 +62,7 @@ def _box(op: PrimitiveOp):
     wp = cq.Workplane("XY").box(x, y, z)
     return wp.val()
 
-def _cylinder(op: PrimitiveOp):
+def _cylinder(op: PrimitiveOp) -> cq.Workplane:
     """
     Create a cylinder primitive.
 
@@ -76,3 +85,11 @@ def _cylinder(op: PrimitiveOp):
     wp = cq.Workplane("XY").circle(r).extrude(z)
     return wp.val()
 
+def _sphere(op: PrimitiveOp) -> cq.Workplane:
+    ...
+    
+def _cone(op: PrimitiveOp) -> cq.Workplane:
+    ...
+    
+def _torus(op: PrimitiveOp) -> cq.Workplane:
+    ...

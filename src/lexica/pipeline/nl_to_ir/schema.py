@@ -41,6 +41,9 @@ class IROpKind(str, Enum):
 class PrimitiveKind(str, Enum):
     BOX = "box"
     CYLINDER = "cylinder"
+    SPHERE = "sphere"
+    CONE = "cone"
+    TORUS = "torus"
 
 
 # ---------------------------------------------------------------------------
