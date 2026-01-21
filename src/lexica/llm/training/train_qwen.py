@@ -9,6 +9,7 @@ from transformers import (
     AutoModelForCausalLM,
     TrainingArguments,
     Trainer,
+    DataCollatorForLanguageModeling,
 )
 from peft import LoraConfig, get_peft_model
 
@@ -19,17 +20,19 @@ from peft import LoraConfig, get_peft_model
 
 BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 
+# src/lexica/llm/training/train_qwen.py -> parents[3] = src
 BASE_DIR = Path(__file__).resolve().parents[3]
 
 TRAIN_PATH = BASE_DIR / "lexica" / "llm" / "dataset" / "train.jsonl"
-EVAL_PATH  = BASE_DIR / "lexica" / "llm" / "dataset" / "eval.jsonl"
+EVAL_PATH = BASE_DIR / "lexica" / "llm" / "dataset" / "eval.jsonl"
 
-# This must match inference loaders:
+# Must match inference loaders:
 # - load_model.py expects lexica/llm/artifacts/lexica-ir-v1-lora
 # - qwen_local.py expects lexica/llm/artifacts/lexica-ir-v1-lora
 OUTPUT_DIR = BASE_DIR / "lexica" / "llm" / "artifacts" / "lexica-ir-v1-lora"
 
 MAX_SEQ_LEN = 1024
+SEED = 1337
 
 torch.set_num_threads(4)
 
@@ -39,8 +42,11 @@ torch.set_num_threads(4)
 # -------------------------------------------------
 
 def load_jsonl_dataset(path: Path) -> list[dict]:
+    if not path.exists():
+        raise FileNotFoundError(f"Dataset file not found: {path}")
+
     records = []
-    with path.open("r") as f:
+    with path.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -52,6 +58,8 @@ def load_jsonl_dataset(path: Path) -> list[dict]:
 def format_conversation(example: dict) -> str:
     """
     Convert OpenAI-style messages into Qwen chat format.
+
+    The training objective is next-token prediction over the full conversation.
     """
     out = []
     for msg in example["messages"]:
@@ -72,6 +80,11 @@ def build_dataset(path: Path) -> Dataset:
 # -------------------------------------------------
 
 def tokenize_fn(tokenizer, example):
+    """
+    Tokenize into input_ids/attention_mask.
+    Labels are set equal to input_ids; padding is handled by data_collator,
+    which pads labels using -100 (so loss ignores padding).
+    """
     tokens = tokenizer(
         example["text"],
         truncation=True,
@@ -87,8 +100,12 @@ def tokenize_fn(tokenizer, example):
 # -------------------------------------------------
 
 def main():
-    # Optional: force offline to avoid HF read timeouts
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    # HF hub can randomly timeout; allow offline mode for stability
+    os.environ.setdefault("HF_HUB_OFFLINE", "0")
+    os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+
+    print("[train] train file:", TRAIN_PATH)
+    print("[train] eval file :", EVAL_PATH)
 
     print("[train] loading datasets...")
     train_ds = build_dataset(TRAIN_PATH)
@@ -96,25 +113,44 @@ def main():
 
     print("[train] train size:", len(train_ds))
     print("[train] eval size :", len(eval_ds))
-    print("[train] sample:\n", train_ds[0]["text"][:400], "...")
+    print("[train] sample preview:\n", train_ds[0]["text"][:500], "...")
 
     print("[train] loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(
         BASE_MODEL,
         trust_remote_code=True,
-        local_files_only=True,
+        local_files_only=False,
     )
 
+    # Needed for collator padding
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+
+    print("[train] tokenizing dataset...")
+    train_ds = train_ds.map(lambda x: tokenize_fn(tokenizer, x), remove_columns=["text"])
+    eval_ds = eval_ds.map(lambda x: tokenize_fn(tokenizer, x), remove_columns=["text"])
+
+    # This is THE critical fix for your crash:
+    # It pads input_ids/attention_mask and pads labels with -100.
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer,
+        mlm=False,
+    )
+
+    use_cuda = torch.cuda.is_available()
+    print("[train] cuda available:", use_cuda)
+    if use_cuda:
+        print("[train] gpu:", torch.cuda.get_device_name(0))
+
+    dtype = torch.float16 if use_cuda else torch.float32
 
     print("[train] loading base model...")
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
-        torch_dtype=torch.float32,
-        device_map=None,  # CPU
+        torch_dtype=dtype,
+        device_map="auto" if use_cuda else None,
         trust_remote_code=True,
-        local_files_only=True,
+        local_files_only=False,
     )
 
     print("[train] applying LoRA...")
@@ -129,37 +165,34 @@ def main():
     model = get_peft_model(model, lora_cfg)
     model.print_trainable_parameters()
 
-    print("[train] tokenizing...")
-    train_ds = train_ds.map(
-        lambda x: tokenize_fn(tokenizer, x),
-        remove_columns=["text"],
-    )
-    eval_ds = eval_ds.map(
-        lambda x: tokenize_fn(tokenizer, x),
-        remove_columns=["text"],
-    )
-
     training_args = TrainingArguments(
         output_dir=str(OUTPUT_DIR),
         overwrite_output_dir=True,
+        seed=SEED,
 
         num_train_epochs=2,
         per_device_train_batch_size=1,
+        per_device_eval_batch_size=1,
         gradient_accumulation_steps=4,
 
         learning_rate=2e-4,
+        warmup_ratio=0.03,
+        weight_decay=0.0,
 
         logging_steps=10,
-        save_steps=100,
-        save_total_limit=1,
 
-        fp16=False,
-        bf16=False,
+        save_steps=200,
+        save_total_limit=2,
 
         report_to="none",
         remove_unused_columns=False,
-        evaluation_strategy="steps",
-        eval_steps=100,
+
+        # Important: correct key name is evaluation_strategy
+        eval_strategy="steps",
+        eval_steps=200,
+
+        fp16=bool(use_cuda),
+        bf16=False,
     )
 
     trainer = Trainer(
@@ -168,6 +201,7 @@ def main():
         train_dataset=train_ds,
         eval_dataset=eval_ds,
         tokenizer=tokenizer,
+        data_collator=data_collator,
     )
 
     print("[train] starting training...")
