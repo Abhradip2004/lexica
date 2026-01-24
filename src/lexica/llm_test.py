@@ -1,95 +1,87 @@
 import json
-from lexica.pipeline.nl_to_ir.translator import nl_to_ir
+
+from lexica.llm.inference.load_model import Orbit
+
 from lexica.pipeline.nl_to_ir.schema import IRModel
+from lexica.pipeline.nl_to_ir.validate import validate_ir
+
+from lexica.irl.ir_to_irl import lower_ir_to_irl
+from lexica.irl.validation import validate_irl
+from lexica.cad_engine.executor import IRLExecutor
+
+def extract_first_json_object(text: str) -> str:
+    """
+    Extract first valid {...} JSON object substring using brace balancing.
+    Works even if the model prints extra junk before/after.
+    """
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("No JSON object start '{' found in output")
+
+    depth = 0
+    in_string = False
+    escape = False
+
+    for i in range(start, len(text)):
+        c = text[i]
+
+        if in_string:
+            if escape:
+                escape = False
+            elif c == "\\":
+                escape = True
+            elif c == '"':
+                in_string = False
+            continue
+
+        if c == '"':
+            in_string = True
+            continue
+
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                candidate = text[start:i+1]
+                # sanity check: must be parseable JSON
+                json.loads(candidate)
+                return candidate
+
+    raise ValueError("No complete JSON object found (unbalanced braces)")
 
 
-# -------------------------------------------------
-# Helper
-# -------------------------------------------------
+def run_kernel_from_ir_dict(ir_dict):
+    # dict -> dataclass
+    ir_model = IRModel(**{
+        "ops": ir_dict["ops"]
+    })
 
-def pretty(obj):
-    return json.dumps(obj, indent=2)
+    validate_ir(ir_model)
+    irl_model = lower_ir_to_irl(ir_model)
+    validate_irl(irl_model)
 
-
-def run_case(prompt: str):
-    print("\n==============================")
-    print("PROMPT:", prompt)
-    ir_model = nl_to_ir(prompt)
-    ir = ir_model.to_dict()  
-    print(pretty(ir))
-    return ir
-
-# -------------------------------------------------
-# Tests
-# -------------------------------------------------
-
-def test_box_only():
-    ir = run_case("Make a cube of side 15")
-
-    assert "ops" in ir
-    assert len(ir["ops"]) == 1
-
-    op = ir["ops"][0]
-    assert op["kind"] == "primitive"
-    assert op["primitive_kind"] == "box"
-
-    params = op["params"]
-    assert params["x"] == params["y"] == params["z"] == 15
+    ex = IRLExecutor()
+    ex.execute(irl_model)
 
 
-def test_box_dimensions():
-    ir = run_case("Make a box with dimensions 30, 20, 10")
+def main():
+    orbit = Orbit()
 
-    op = ir["ops"][0]
-    params = op["params"]
+    prompt = "Create a rectangular mounting plate 120mm by 80mm by 6mm. Fillet edges 2mm. Add four corner through holes of 6mm diameter. Add a through hole in the center of 30mm Export step."
+    print("PROMPT:\n", prompt)
 
-    assert params["x"] == 30
-    assert params["y"] == 20
-    assert params["z"] == 10
+    out = orbit.generate(prompt)
+    print("\nORBIT OUTPUT:\n", out)
 
+    # parse json
+    ir_dict = json.loads(extract_first_json_object(out))
 
-def test_box_with_fillet():
-    ir = run_case("Make a box 30 30 30 and round all edges by 2")
+    # run kernel
+    run_kernel_from_ir_dict(ir_dict)
 
-    assert len(ir["ops"]) >= 1
-    assert ir["ops"][0]["kind"] == "primitive"
+    print("\nSUCCESS: kernel executed. Check lexica_output.step")
 
-
-def test_box_with_chamfer():
-    ir = run_case("Create a 50x40x20 block with chamfered edges of 1")
-
-    assert len(ir["ops"]) == 2
-
-    feat = ir["ops"][1]
-    assert feat["feature_kind"] == "chamfer"
-    assert feat["params"]["distance"] == 1
-
-
-def test_box_with_hole():
-    ir = run_case("Make a box 40 40 20 and drill a hole of diameter 10 in the center")
-
-    assert len(ir["ops"]) == 2
-
-    feat = ir["ops"][1]
-    assert feat["feature_kind"] == "hole"
-
-    params = feat["params"]
-    assert params["diameter"] == 10
-    assert params["through_all"] is True
-    assert params["center"] == [0, 0]
-
-
-# -------------------------------------------------
-# Entry point
-# -------------------------------------------------
 
 if __name__ == "__main__":
-    print("Running Lexica prompt-to-IR tests...\n")
-
-    # test_box_only()
-    test_box_dimensions()
-    # test_box_with_fillet()
-    # test_box_with_chamfer()
-    # test_box_with_hole()
-
-    print("\nALL TESTS PASSED")
+    main()

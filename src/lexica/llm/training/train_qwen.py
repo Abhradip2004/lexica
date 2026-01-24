@@ -26,9 +26,6 @@ BASE_DIR = Path(__file__).resolve().parents[3]
 TRAIN_PATH = BASE_DIR / "lexica" / "llm" / "dataset" / "train.jsonl"
 EVAL_PATH = BASE_DIR / "lexica" / "llm" / "dataset" / "eval.jsonl"
 
-# Must match inference loaders:
-# - load_model.py expects lexica/llm/artifacts/lexica-ir-v1-lora
-# - qwen_local.py expects lexica/llm/artifacts/lexica-ir-v1-lora
 OUTPUT_DIR = BASE_DIR / "lexica" / "llm" / "artifacts" / "lexica-ir-v1-lora"
 
 MAX_SEQ_LEN = 1024
@@ -55,23 +52,26 @@ def load_jsonl_dataset(path: Path) -> list[dict]:
     return records
 
 
-def format_conversation(example: dict) -> str:
+def build_dataset(path: Path, tokenizer: AutoTokenizer) -> Dataset:
     """
-    Convert OpenAI-style messages into Qwen chat format.
-
-    The training objective is next-token prediction over the full conversation.
+    Converts OpenAI-style `messages` into the model's *official*
+    chat template using `tokenizer.apply_chat_template`.
     """
-    out = []
-    for msg in example["messages"]:
-        role = msg["role"]
-        content = msg["content"]
-        out.append(f"<|{role}|>\n{content}")
-    return "\n".join(out)
-
-
-def build_dataset(path: Path) -> Dataset:
     raw = load_jsonl_dataset(path)
-    texts = [format_conversation(ex) for ex in raw]
+
+    texts = []
+    for ex in raw:
+        msgs = ex["messages"]
+
+        # Important: We must NOT add a generation prompt during training.
+        # We want the assistant message included in the training text.
+        text = tokenizer.apply_chat_template(
+            msgs,
+            tokenize=False,
+            add_generation_prompt=False,
+        )
+        texts.append(text)
+
     return Dataset.from_dict({"text": texts})
 
 
@@ -80,11 +80,6 @@ def build_dataset(path: Path) -> Dataset:
 # -------------------------------------------------
 
 def tokenize_fn(tokenizer, example):
-    """
-    Tokenize into input_ids/attention_mask.
-    Labels are set equal to input_ids; padding is handled by data_collator,
-    which pads labels using -100 (so loss ignores padding).
-    """
     tokens = tokenizer(
         example["text"],
         truncation=True,
@@ -100,20 +95,11 @@ def tokenize_fn(tokenizer, example):
 # -------------------------------------------------
 
 def main():
-    # HF hub can randomly timeout; allow offline mode for stability
     os.environ.setdefault("HF_HUB_OFFLINE", "0")
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
     print("[train] train file:", TRAIN_PATH)
     print("[train] eval file :", EVAL_PATH)
-
-    print("[train] loading datasets...")
-    train_ds = build_dataset(TRAIN_PATH)
-    eval_ds = build_dataset(EVAL_PATH)
-
-    print("[train] train size:", len(train_ds))
-    print("[train] eval size :", len(eval_ds))
-    print("[train] sample preview:\n", train_ds[0]["text"][:500], "...")
 
     print("[train] loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(
@@ -126,12 +112,19 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    print("[train] loading datasets...")
+    train_ds = build_dataset(TRAIN_PATH, tokenizer)
+    eval_ds = build_dataset(EVAL_PATH, tokenizer)
+
+    print("[train] train size:", len(train_ds))
+    print("[train] eval size :", len(eval_ds))
+    print("[train] sample preview:\n", train_ds[0]["text"][:500], "...")
+
     print("[train] tokenizing dataset...")
     train_ds = train_ds.map(lambda x: tokenize_fn(tokenizer, x), remove_columns=["text"])
     eval_ds = eval_ds.map(lambda x: tokenize_fn(tokenizer, x), remove_columns=["text"])
 
-    # This is THE critical fix for your crash:
-    # It pads input_ids/attention_mask and pads labels with -100.
+    # pads labels with -100
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
         mlm=False,
@@ -170,7 +163,7 @@ def main():
         overwrite_output_dir=True,
         seed=SEED,
 
-        num_train_epochs=2,
+        num_train_epochs=5,
         per_device_train_batch_size=1,
         per_device_eval_batch_size=1,
         gradient_accumulation_steps=4,
@@ -187,7 +180,6 @@ def main():
         report_to="none",
         remove_unused_columns=False,
 
-        # Important: correct key name is evaluation_strategy
         eval_strategy="steps",
         eval_steps=200,
 

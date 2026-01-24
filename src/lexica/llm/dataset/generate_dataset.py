@@ -439,10 +439,10 @@ def generate_dataset(
 
             f.write(json.dumps(sample) + "\n")
 
-    print(f"Generated {n_samples} samples → {out_file}")
+    print(f"Generated {n_samples} samples -> {out_file}")
     print(f"balanced={balanced} | templates={len(TEMPLATE_SAMPLERS)}")
 
 
 if __name__ == "__main__":
     # For CPU training: 2000–3000 
-    generate_dataset(n_samples=2400, seed=42, out_file="raw_dataset.jsonl", balanced=True)
+    generate_dataset(n_samples=3400, seed=42, out_file="raw_dataset.jsonl", balanced=True)

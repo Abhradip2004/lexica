@@ -3,20 +3,23 @@ import json
 import random
 from typing import Dict, Any, List
 
-
 # ----------------------------
-# Config
+# Path-safe config (works from any cwd)
 # ----------------------------
 
-INPUT_FILE = "final_dataset.jsonl"  # produced by evaluate_dataset.py
-SYSTEM_PROMPT_FILE = "llm/prompts/system.txt"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))         # .../src/lexica/llm/dataset
+LEXICA_SRC_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))  # .../src/lexica
 
-OUT_DIR = "llm/dataset"
+INPUT_FILE = os.path.join(LEXICA_SRC_DIR, "final_dataset.jsonl")
+SYSTEM_PROMPT_FILE = os.path.join(LEXICA_SRC_DIR, "llm", "prompts", "system.txt")
+
+OUT_DIR = os.path.join(LEXICA_SRC_DIR, "llm", "dataset")
 TRAIN_OUT = os.path.join(OUT_DIR, "train.jsonl")
 EVAL_OUT = os.path.join(OUT_DIR, "eval.jsonl")
 
-EVAL_RATIO = 0.12  # ~12% for eval
+EVAL_RATIO = 0.12
 SEED = 42
+
 
 
 # ----------------------------
