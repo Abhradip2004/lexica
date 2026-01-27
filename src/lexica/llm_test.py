@@ -9,6 +9,10 @@ from lexica.irl.ir_to_irl import lower_ir_to_irl
 from lexica.irl.validation import validate_irl
 from lexica.cad_engine.executor import IRLExecutor
 
+system = open("lexica/src/lexica/llm/prompts/system.txt").read()
+
+full_prompt = f"{system}"
+
 def extract_first_json_object(text: str) -> str:
     """
     Extract first valid {...} JSON object substring using brace balancing.
@@ -71,7 +75,7 @@ def main():
     prompt = "Create a rectangular mounting plate 120mm by 80mm by 6mm. Fillet edges 2mm. Add four corner through holes of 6mm diameter. Add a through hole in the center of 30mm Export step."
     print("PROMPT:\n", prompt)
 
-    out = orbit.generate(prompt)
+    out = orbit.generate(full_prompt + prompt)
     print("\nORBIT OUTPUT:\n", out)
 
     # parse json
