@@ -54,7 +54,7 @@ SEED = 1337
 # Maximum sequence length.
 # Lower values greatly reduce attention cost on CPU.
 # If your data allows, try 384 or 256 later.
-MAX_SEQ_LEN = 576
+MAX_SEQ_LEN = 512
 
 
 # -------------------------------------------------
@@ -63,7 +63,7 @@ MAX_SEQ_LEN = 576
 
 # Do NOT blindly use all available cores.
 # 12–16 threads is a safe range for EPYC CPU LLM training.
-torch.set_num_threads(16)
+torch.set_num_threads(12)
 torch.set_num_interop_threads(4)
 
 
@@ -183,35 +183,32 @@ def main():
         seed=SEED,
 
         num_train_epochs=5,
-
-        # Batch size greater than 1 increases RAM pressure on CPU.
-        # per_device_train_batch_size=1,
-
-        # Gradient accumulation improves efficiency without increasing peak memory.
-        gradient_accumulation_steps=8,
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=4,
 
         learning_rate=2e-4,
-        warmup_steps=200,
+        warmup_ratio=0.03,
+        weight_decay=0.0,
 
         logging_steps=50,
+
         save_steps=500,
         save_total_limit=2,
 
-        # Each DataLoader worker consumes significant RAM.
-        dataloader_num_workers=1,
-        dataloader_prefetch_factor=2,
-        dataloader_pin_memory=True,
-
         report_to="none",
-        remove_unused_columns=False,
-        eval_strategy="no",
-        # eval_steps=200,
-        use_cpu=True,
+        remove_unused_columns=True,
 
-        # Precision settings
-        bf16=False,
+        eval_strategy="no",
+
+        dataloader_num_workers=4,
+        dataloader_pin_memory=False,
+
+        optim="adamw_torch",
+
         fp16=False,
+        bf16=False,
     )
+
 
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
