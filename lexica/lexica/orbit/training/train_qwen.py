@@ -103,7 +103,7 @@ def tokenize_fn(tokenizer, example):
 
         # Dynamic padding is critical on CPU.
         # Static padding causes large RAM spikes.
-        padding=False,
+        padding="max_length",
     )
     tokens["labels"] = tokens["input_ids"]
     return tokens
