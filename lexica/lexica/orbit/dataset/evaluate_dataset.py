@@ -1,7 +1,7 @@
 import os
 import json
 from collections import defaultdict
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple
 
 from tqdm import tqdm
 
