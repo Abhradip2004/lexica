@@ -172,8 +172,8 @@ def main():
         seed=SEED,
 
         num_train_epochs=5,
-        per_device_train_batch_size=1,
-        gradient_accumulation_steps=6,          # effective batch size = 6
+        per_device_train_batch_size=2,
+        gradient_accumulation_steps=4,          # effective batch size = 6
 
         learning_rate=2e-4,
         warmup_ratio=0.03,
