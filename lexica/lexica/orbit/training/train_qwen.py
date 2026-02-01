@@ -205,6 +205,7 @@ def main():
         remove_unused_columns=False,
         eval_strategy="steps",
         eval_steps=200,
+        use_cpu=True,
 
         # Precision settings
         bf16=True,
