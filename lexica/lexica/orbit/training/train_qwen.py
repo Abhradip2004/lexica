@@ -63,7 +63,7 @@ MAX_SEQ_LEN = 512
 
 # Do NOT blindly use all available cores.
 # 12–16 threads is a safe range for EPYC CPU LLM training.
-torch.set_num_threads(12)
+torch.set_num_threads(16)
 torch.set_num_interop_threads(4)
 
 
