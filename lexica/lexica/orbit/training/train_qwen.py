@@ -1,3 +1,18 @@
+"""
+Orbit fine-tuning script (CPU-optimized).
+
+Target:
+Natural Language --> Lexica IR (JSON)
+
+This version is optimized for:
+- CPU-only training
+- AMD EPYC (Zen 4)
+- Memory stability (no OOM)
+- Reasonable speed without GPU
+
+Most optimization-related lines are commented so they can be tweaked later.
+"""
+
 import json
 import os
 from pathlib import Path
@@ -34,14 +49,26 @@ OUTPUT_DIR = (
     / "orbit-ir-v0-lora"
 )
 
-MAX_SEQ_LEN = 1024
 SEED = 1337
 
-CPU_CORES = os.cpu_count() or 32
+# Maximum sequence length.
+# Lower values greatly reduce attention cost on CPU.
+# If your data allows, try 384 or 256 later.
+MAX_SEQ_LEN = 512
 
 
 # -------------------------------------------------
-# Dataset
+# CPU / Threading configuration
+# -------------------------------------------------
+
+# Do NOT blindly use all available cores.
+# 12–16 threads is a safe range for EPYC CPU LLM training.
+torch.set_num_threads(16)
+torch.set_num_interop_threads(4)
+
+
+# -------------------------------------------------
+# Dataset utilities
 # -------------------------------------------------
 
 def load_jsonl_dataset(path: Path) -> list[dict]:
@@ -55,6 +82,7 @@ def load_jsonl_dataset(path: Path) -> list[dict]:
 
 def build_dataset(path: Path, tokenizer: AutoTokenizer) -> Dataset:
     raw = load_jsonl_dataset(path)
+
     texts = [
         tokenizer.apply_chat_template(
             ex["messages"],
@@ -63,6 +91,7 @@ def build_dataset(path: Path, tokenizer: AutoTokenizer) -> Dataset:
         )
         for ex in raw
     ]
+
     return Dataset.from_dict({"text": texts})
 
 
@@ -71,7 +100,10 @@ def tokenize_fn(tokenizer, example):
         example["text"],
         truncation=True,
         max_length=MAX_SEQ_LEN,
-        padding=False,  # IMPORTANT for CPU
+
+        # Dynamic padding is critical on CPU.
+        # Static padding causes large RAM spikes.
+        padding=False,
     )
     tokens["labels"] = tokens["input_ids"]
     return tokens
@@ -84,9 +116,7 @@ def tokenize_fn(tokenizer, example):
 def main():
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 
-    torch.set_num_threads(CPU_CORES)
-    torch.set_num_interop_threads(min(8, CPU_CORES))
-
+    print("[orbit-train] loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(
         BASE_MODEL,
         trust_remote_code=True,
@@ -95,36 +125,58 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    print("[orbit-train] loading datasets...")
     train_ds = build_dataset(TRAIN_PATH, tokenizer)
     eval_ds = build_dataset(EVAL_PATH, tokenizer)
 
+    print("[orbit-train] tokenizing datasets...")
+
+    # num_proc speeds up tokenization only and is safe.
     train_ds = train_ds.map(
         lambda x: tokenize_fn(tokenizer, x),
         remove_columns=["text"],
-        num_proc=min(8, CPU_CORES),
+        num_proc=4,
     )
     eval_ds = eval_ds.map(
         lambda x: tokenize_fn(tokenizer, x),
         remove_columns=["text"],
-        num_proc=min(8, CPU_CORES),
+        num_proc=4,
     )
 
+    # -------------------------------------------------
+    # Model loading
+    # -------------------------------------------------
+
+    print("[orbit-train] loading base model...")
+
+    # Use BF16 on CPU.
+    # Zen 4 EPYC supports BF16 and it is significantly faster than FP32.
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
-        torch_dtype=torch.float32,
+        torch_dtype=torch.bfloat16,
         trust_remote_code=True,
     )
+
+    print("[orbit-train] applying LoRA...")
 
     lora_cfg = LoraConfig(
         r=16,
         lora_alpha=32,
+
+        # Keep LoRA target modules minimal for CPU training.
         target_modules=["q_proj", "v_proj"],
+
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
     )
+
     model = get_peft_model(model, lora_cfg)
     model.print_trainable_parameters()
+
+    # -------------------------------------------------
+    # Training arguments (CPU-safe)
+    # -------------------------------------------------
 
     training_args = TrainingArguments(
         output_dir=str(OUTPUT_DIR),
@@ -132,7 +184,10 @@ def main():
 
         num_train_epochs=5,
 
+        # Batch size greater than 1 increases RAM pressure on CPU.
         per_device_train_batch_size=1,
+
+        # Gradient accumulation improves efficiency without increasing peak memory.
         gradient_accumulation_steps=2,
 
         learning_rate=2e-4,
@@ -142,6 +197,7 @@ def main():
         save_steps=500,
         save_total_limit=2,
 
+        # Each DataLoader worker consumes significant RAM.
         dataloader_num_workers=2,
         dataloader_prefetch_factor=2,
 
@@ -150,24 +206,33 @@ def main():
         eval_strategy="steps",
         eval_steps=200,
 
+        # Precision settings
+        bf16=True,
         fp16=False,
-        bf16=False,
     )
 
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer,
+        mlm=False,
+    )
 
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
-        data_collator=DataCollatorForLanguageModeling(
-            tokenizer=tokenizer,
-            mlm=False,
-        ),
+        data_collator=data_collator,
     )
 
+    print("[orbit-train] starting training...")
     trainer.train()
+
+    print("[orbit-train] saving adapter...")
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     trainer.save_model(str(OUTPUT_DIR))
+
+    print("[orbit-train] done.")
+    print("[orbit-train] adapter saved to:", OUTPUT_DIR)
 
 
 if __name__ == "__main__":
