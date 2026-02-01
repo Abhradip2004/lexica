@@ -54,7 +54,7 @@ SEED = 1337
 # Maximum sequence length.
 # Lower values greatly reduce attention cost on CPU.
 # If your data allows, try 384 or 256 later.
-MAX_SEQ_LEN = 512
+MAX_SEQ_LEN = 576
 
 
 # -------------------------------------------------
@@ -63,7 +63,7 @@ MAX_SEQ_LEN = 512
 
 # Do NOT blindly use all available cores.
 # 12–16 threads is a safe range for EPYC CPU LLM training.
-torch.set_num_threads(24)
+torch.set_num_threads(16)
 torch.set_num_interop_threads(4)
 
 
@@ -185,30 +185,31 @@ def main():
         num_train_epochs=5,
 
         # Batch size greater than 1 increases RAM pressure on CPU.
-        per_device_train_batch_size=1,
+        # per_device_train_batch_size=1,
 
         # Gradient accumulation improves efficiency without increasing peak memory.
-        gradient_accumulation_steps=3,
+        gradient_accumulation_steps=8,
 
         learning_rate=2e-4,
         warmup_steps=200,
 
-        logging_steps=10,
+        logging_steps=50,
         save_steps=500,
         save_total_limit=2,
 
         # Each DataLoader worker consumes significant RAM.
-        dataloader_num_workers=2,
+        dataloader_num_workers=8,
         dataloader_prefetch_factor=2,
+        dataloader_pin_memory=True,
 
         report_to="none",
         remove_unused_columns=False,
-        eval_strategy="steps",
-        eval_steps=200,
+        eval_strategy="no",
+        # eval_steps=200,
         use_cpu=True,
 
         # Precision settings
-        bf16=True,
+        bf16=False,
         fp16=False,
     )
 
