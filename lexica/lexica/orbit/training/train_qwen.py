@@ -172,8 +172,8 @@ def main():
         seed=SEED,
 
         num_train_epochs=5,
-        per_device_train_batch_size=8,
-        gradient_accumulation_steps=4,          # effective batch size = 6
+        per_device_train_batch_size=4,
+        gradient_accumulation_steps=8,          # effective batch size = 6
 
         learning_rate=2e-4,
         warmup_ratio=0.03,
@@ -191,8 +191,8 @@ def main():
 
         eval_strategy="no",
 
-        dataloader_num_workers=2,               # match vCPU count
-        dataloader_pin_memory=True,            # usually better off on small VMs
+        dataloader_num_workers=0,               # match vCPU count
+        dataloader_pin_memory=False,            # usually better off on small VMs
         dataloader_persistent_workers=True,     # reduces startup overhead
 
         use_cpu=True,
