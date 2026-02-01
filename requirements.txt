@@ -1,0 +1,15 @@
+# Core
+numpy
+
+# CAD / Torque
+cadquery
+
+# LLM / Orbit
+torch
+transformers
+datasets
+peft
+accelerate
+
+# Utilities
+tqdm
