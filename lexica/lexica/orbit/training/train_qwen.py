@@ -89,7 +89,7 @@ def tokenize_fn(tokenizer, example):
         example["text"],
         truncation=True,
         max_length=MAX_SEQ_LEN,
-        padding=False,  # dynamic padding via collator
+        padding="max_length",
     )
     tokens["labels"] = tokens["input_ids"]
     return tokens
