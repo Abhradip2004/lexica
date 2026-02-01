@@ -1,13 +1,14 @@
 """
-Orbit fine-tuning script (CPU-optimized, Transformers v5 compatible).
+Orbit fine-tuning script (CPU BF16 path).
 
 Target:
 Natural Language --> Lexica IR (JSON)
 
-Constraints:
-- CPU-only (AMD EPYC)
+Hardware target:
+- AMD EPYC 9354P
+- CPU-only
 - <= 16 GB RAM
-- Stable + reproducible
+- Transformers v5
 """
 
 import os
@@ -27,7 +28,7 @@ from peft import LoraConfig, get_peft_model
 
 
 # -------------------------------------------------------------------
-# CPU / threading configuration (CRITICAL for EPYC)
+# CPU threading (critical for EPYC)
 # -------------------------------------------------------------------
 
 torch.set_num_threads(12)
@@ -35,7 +36,7 @@ torch.set_num_interop_threads(4)
 
 
 # -------------------------------------------------------------------
-# Paths and constants
+# Paths / constants
 # -------------------------------------------------------------------
 
 BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
@@ -58,12 +59,12 @@ SEED = 1337
 # -------------------------------------------------------------------
 
 def load_jsonl(path: Path) -> list[dict]:
-    records = []
+    out = []
     with path.open("r", encoding="utf-8") as f:
         for line in f:
             if line.strip():
-                records.append(json.loads(line))
-    return records
+                out.append(json.loads(line))
+    return out
 
 
 def build_dataset(path: Path, tokenizer: AutoTokenizer) -> Dataset:
@@ -82,27 +83,24 @@ def build_dataset(path: Path, tokenizer: AutoTokenizer) -> Dataset:
 
 
 def tokenize_fn(tokenizer, example):
-    # Dynamic padding (per batch via collator)
     tokens = tokenizer(
         example["text"],
         truncation=True,
         max_length=MAX_SEQ_LEN,
-        padding=False,
+        padding=False,   # dynamic padding via collator
     )
-
     tokens["labels"] = tokens["input_ids"]
     return tokens
 
 
 # -------------------------------------------------------------------
-# Main training entry
+# Main
 # -------------------------------------------------------------------
 
 def main():
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
-    print("[orbit-train] train file:", TRAIN_FILE)
-    print("[orbit-train] eval  file:", EVAL_FILE)
+    print("[orbit-train] BF16 CPU path enabled")
 
     # ---------------- Tokenizer ----------------
 
@@ -136,12 +134,11 @@ def main():
         mlm=False,
     )
 
-    # ---------------- Model ----------------
-    # IMPORTANT: FP32 on CPU (fastest + stable)
+    # ---------------- Model (BF16 end-to-end) ----------------
 
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
-        torch_dtype=torch.float32,
+        torch_dtype=torch.bfloat16,   # IMPORTANT
         trust_remote_code=True,
     )
 
@@ -189,7 +186,7 @@ def main():
         optim="adamw_torch",
 
         fp16=False,
-        bf16=False,
+        bf16=True,   # IMPORTANT
     )
 
     # ---------------- Trainer ----------------
@@ -202,7 +199,7 @@ def main():
         data_collator=data_collator,
     )
 
-    print("[orbit-train] starting training...")
+    print("[orbit-train] starting training (BF16)...")
     trainer.train()
 
     # ---------------- Save ----------------
