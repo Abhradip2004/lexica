@@ -33,11 +33,14 @@ import psutil
 # CPU threading (optimized for EPYC 9354P)
 # -------------------------------------------------------------------
 
-num_cores = os.cpu_count()  # Should be 64 on your setup
-torch.set_num_threads(num_cores // 2)  # 32 for intra-op (balance compute vs. overhead)
-torch.set_num_interop_threads(num_cores // 4)  # 16 for inter-op
+import torch.backends
+torch.backends.mkldnn.verbose = torch.backends.mkldnn.verbose.ON
 
-print(f"[orbit-train] Detected {num_cores} logical cores. Set intra-op threads: {torch.get_num_threads()}, inter-op: {torch.get_num_interop_threads()}")
+# num_cores = os.cpu_count()  # Should be 64 on your setup
+torch.set_num_threads(32)  # 32 for intra-op (balance compute vs. overhead)
+torch.set_num_interop_threads(8)  # 16 for inter-op
+
+print(f"[orbit-train] Detected {32} logical cores. Set intra-op threads: {torch.get_num_threads()}, inter-op: {torch.get_num_interop_threads()}")
 
 # -------------------------------------------------------------------
 # Paths / constants
@@ -180,7 +183,7 @@ def main():
 
         eval_strategy="no",
 
-        dataloader_num_workers=16,  # Increased for better I/O parallelism
+        dataloader_num_workers=8,  # Increased for better I/O parallelism
         dataloader_pin_memory=True,  # Enable for faster data transfer (CPU-safe)
         
         use_cpu=True,
