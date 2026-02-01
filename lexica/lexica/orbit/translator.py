@@ -3,12 +3,12 @@ import re
 from pathlib import Path
 from typing import Any, Dict
 
-from lexica.pipeline.nl_to_ir.ir_normalizer import normalize_ir
-from lexica.pipeline.nl_to_ir.schema import IRModel
-from lexica.pipeline.nl_to_ir.validate import validate_ir
-# from lexica.pipeline.nl_to_ir.errors import TranslationError
-from lexica.llm.inference.qwen_local import generate
-# from lexica.llm.postprocess import semantic_rewrite_ir_dict
+# from lexica.torque.language.ir.normalize import normalize_ir
+from lexica.torque.language.ir.schema import IRModel
+from lexica.torque.language.ir.validate import validate_ir
+from lexica.orbit.inference.qwen_local import generate
+
+
 
 
 # -------------------------------------------------
@@ -44,7 +44,7 @@ def nl_to_ir(user_input: str, debug: bool = False) -> IRModel:
     3. Otherwise fallback intent mapper (minimal, safe)
     """
 
-    from lexica.llm.postprocess import semantic_rewrite_ir_dict
+    from lexica.orbit.postprocess import semantic_rewrite_ir_dict
 
     last_error: str | None = None
 
@@ -87,7 +87,7 @@ def nl_to_ir(user_input: str, debug: bool = False) -> IRModel:
             # -------------------------------------------------
             # Normalize + validate (kernel strict contract)
             # -------------------------------------------------
-            data = normalize_ir(data)
+            # data = normalize_ir(data)
             ir = IRModel(**data)
             validate_ir(ir)
 

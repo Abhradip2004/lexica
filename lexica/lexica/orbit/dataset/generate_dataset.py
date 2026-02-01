@@ -3,7 +3,7 @@ import random
 from dataclasses import asdict, is_dataclass
 from typing import Dict, List, Tuple
 
-from lexica.pipeline.nl_to_ir.schema import (
+from lexica.torque.language.ir.schema import (
     IRModel,
     PrimitiveOp,
     FeatureOp,

@@ -11,9 +11,9 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))         # .../src/lexica
 LEXICA_SRC_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))  # .../src/lexica
 
 INPUT_FILE = os.path.join(LEXICA_SRC_DIR, "final_dataset.jsonl")
-SYSTEM_PROMPT_FILE = os.path.join(LEXICA_SRC_DIR, "llm", "prompts", "system.txt")
+SYSTEM_PROMPT_FILE = os.path.join(LEXICA_SRC_DIR, "orbit", "prompts", "system.txt")
 
-OUT_DIR = os.path.join(LEXICA_SRC_DIR, "llm", "dataset")
+OUT_DIR = os.path.join(LEXICA_SRC_DIR, "orbit", "dataset")
 TRAIN_OUT = os.path.join(OUT_DIR, "train.jsonl")
 EVAL_OUT = os.path.join(OUT_DIR, "eval.jsonl")
 

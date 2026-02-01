@@ -1,71 +1,67 @@
-import os
-import json
-from tqdm import tqdm
+"""
+End-to-end evaluation of Orbit + Torque.
 
-from lexica.pipeline.nl_to_ir.validate import validate_ir
-from lexica.irl.ir_to_irl import lower_ir_to_irl
-from lexica.irl.validation import validate_irl
-from lexica.cad_engine.executor import IRLExecutor
+This module tests the full Lexica stack:
+NL --> Orbit --> IR --> IRL --> Kernel
+"""
 
-from lexica.llm.inference.load_model import Orbit
+from pathlib import Path
+from typing import Any
 
+from lexica.orbit.pipeline import run_orbit
 
-# ----------------------------
-# Path-safe config
-# ----------------------------
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) 
-LEXICA_SRC_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))  
-
-EVAL_FILE = os.path.join(LEXICA_SRC_DIR, "llm", "dataset", "eval.jsonl")
+from lexica.torque.language.ir.validate import validate_ir
+from lexica.torque.irl.ir_to_irl import lower_ir_to_irl
+from lexica.torque.irl.validation import validate_irl
+from lexica.torque.kernel.executor import IRLExecutor
 
 
-def run_kernel(ir_dict):
+class OrbitEvaluationError(Exception):
+    """Raised when Orbit evaluation fails."""
+    pass
+
+
+def run_kernel_from_prompt(
+    prompt: str,
+    output_path: str | Path,
+    **executor_kwargs: Any,
+) -> None:
+    """
+    Run the full pipeline from natural language to CAD output.
+
+    Args:
+        prompt: Natural language modeling instruction
+        output_path: Path to output STEP file
+        executor_kwargs: Optional kernel execution parameters
+    """
     try:
-        # reuse your dict_to_ir_model logic here
-        from lexica.llm.dataset.evaluate_dataset import dict_to_ir_model
-        ir = dict_to_ir_model(ir_dict)
+        # 1. Orbit: NL -> IR
+        ir = run_orbit(prompt)
 
+        # 2. IR validation (explicit, defensive)
         validate_ir(ir)
+
+        # 3. Lower IR -> IRL
         irl = lower_ir_to_irl(ir)
+
+        # 4. IRL validation
         validate_irl(irl)
 
-        IRLExecutor().execute(irl)
-        return True
-    except Exception:
-        return False
+        # 5. Kernel execution
+        executor = IRLExecutor(**executor_kwargs)
+        executor.execute(irl, output_path=str(output_path))
 
-
-def main():
-    orbit = Orbit()
-
-    total = 0
-    kernel_valid = 0
-
-    with open(EVAL_FILE) as f:
-        for line in tqdm(f):
-            obj = json.loads(line)
-
-            user_prompt = obj["messages"][1]["content"]
-            gt_ir = json.loads(obj["messages"][2]["content"])
-
-            pred_text = orbit.generate(user_prompt)
-
-            try:
-                pred_ir = json.loads(pred_text)
-            except Exception:
-                total += 1
-                continue
-
-            if run_kernel(pred_ir):
-                kernel_valid += 1
-
-            total += 1
-
-    print("Total samples:", total)
-    print("Kernel-valid:", kernel_valid)
-    print("Kernel-valid accuracy:", kernel_valid / total)
+    except Exception as e:
+        raise OrbitEvaluationError(
+            f"Orbit evaluation failed: {e}"
+        ) from e
 
 
 if __name__ == "__main__":
-    main()
+    # Simple manual test
+    out = Path("orbit_eval_output.step")
+    run_kernel_from_prompt(
+        "Create a box of 10 by 20 by 5 millimeters",
+        out,
+    )
+    print(f"Output written to {out.resolve()}")

@@ -1,3 +1,15 @@
+"""
+Orbit fine-tuning script.
+
+This script fine-tunes a Qwen-based model to translate
+natural language into valid Lexica IR v0.
+
+Target:
+NL --> Lexica IR (JSON)
+
+The model is trained using supervised chat-style examples.
+"""
+
 import json
 import os
 from pathlib import Path
@@ -20,13 +32,20 @@ from peft import LoraConfig, get_peft_model
 
 BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 
-# src/lexica/llm/training/train_qwen.py -> parents[3] = src
+# Project root
 BASE_DIR = Path(__file__).resolve().parents[3]
 
-TRAIN_PATH = BASE_DIR / "lexica" / "llm" / "dataset" / "train.jsonl"
-EVAL_PATH = BASE_DIR / "lexica" / "llm" / "dataset" / "eval.jsonl"
+DATASET_DIR = BASE_DIR / "lexica" / "orbit" / "dataset"
+TRAIN_PATH = DATASET_DIR / "train.jsonl"
+EVAL_PATH = DATASET_DIR / "eval.jsonl"
 
-OUTPUT_DIR = BASE_DIR / "lexica" / "llm" / "artifacts" / "lexica-ir-v1-lora"
+OUTPUT_DIR = (
+    BASE_DIR
+    / "lexica"
+    / "orbit"
+    / "artifacts"
+    / "orbit-ir-v0-lora"
+)
 
 MAX_SEQ_LEN = 1024
 SEED = 1337
@@ -54,17 +73,16 @@ def load_jsonl_dataset(path: Path) -> list[dict]:
 
 def build_dataset(path: Path, tokenizer: AutoTokenizer) -> Dataset:
     """
-    Converts OpenAI-style `messages` into the model's *official*
-    chat template using `tokenizer.apply_chat_template`.
+    Converts OpenAI-style `messages` into the model's official
+    chat template using tokenizer.apply_chat_template.
+
+    The assistant message MUST be included in the training text.
     """
     raw = load_jsonl_dataset(path)
 
     texts = []
     for ex in raw:
         msgs = ex["messages"]
-
-        # Important: We must NOT add a generation prompt during training.
-        # We want the assistant message included in the training text.
         text = tokenizer.apply_chat_template(
             msgs,
             tokenize=False,
@@ -98,46 +116,50 @@ def main():
     os.environ.setdefault("HF_HUB_OFFLINE", "0")
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
-    print("[train] train file:", TRAIN_PATH)
-    print("[train] eval file :", EVAL_PATH)
+    print("[orbit-train] train file:", TRAIN_PATH)
+    print("[orbit-train] eval file :", EVAL_PATH)
 
-    print("[train] loading tokenizer...")
+    print("[orbit-train] loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(
         BASE_MODEL,
         trust_remote_code=True,
         local_files_only=False,
     )
 
-    # Needed for collator padding
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print("[train] loading datasets...")
+    print("[orbit-train] loading datasets...")
     train_ds = build_dataset(TRAIN_PATH, tokenizer)
     eval_ds = build_dataset(EVAL_PATH, tokenizer)
 
-    print("[train] train size:", len(train_ds))
-    print("[train] eval size :", len(eval_ds))
-    print("[train] sample preview:\n", train_ds[0]["text"][:500], "...")
+    print("[orbit-train] train size:", len(train_ds))
+    print("[orbit-train] eval size :", len(eval_ds))
+    print("[orbit-train] sample preview:\n", train_ds[0]["text"][:500], "...")
 
-    print("[train] tokenizing dataset...")
-    train_ds = train_ds.map(lambda x: tokenize_fn(tokenizer, x), remove_columns=["text"])
-    eval_ds = eval_ds.map(lambda x: tokenize_fn(tokenizer, x), remove_columns=["text"])
+    print("[orbit-train] tokenizing dataset...")
+    train_ds = train_ds.map(
+        lambda x: tokenize_fn(tokenizer, x),
+        remove_columns=["text"],
+    )
+    eval_ds = eval_ds.map(
+        lambda x: tokenize_fn(tokenizer, x),
+        remove_columns=["text"],
+    )
 
-    # pads labels with -100
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
         mlm=False,
     )
 
     use_cuda = torch.cuda.is_available()
-    print("[train] cuda available:", use_cuda)
+    print("[orbit-train] cuda available:", use_cuda)
     if use_cuda:
-        print("[train] gpu:", torch.cuda.get_device_name(0))
+        print("[orbit-train] gpu:", torch.cuda.get_device_name(0))
 
     dtype = torch.float16 if use_cuda else torch.float32
 
-    print("[train] loading base model...")
+    print("[orbit-train] loading base model...")
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         torch_dtype=dtype,
@@ -146,7 +168,7 @@ def main():
         local_files_only=False,
     )
 
-    print("[train] applying LoRA...")
+    print("[orbit-train] applying LoRA...")
     lora_cfg = LoraConfig(
         r=16,
         lora_alpha=32,
@@ -196,15 +218,15 @@ def main():
         data_collator=data_collator,
     )
 
-    print("[train] starting training...")
+    print("[orbit-train] starting training...")
     trainer.train()
 
-    print("[train] saving adapter...")
+    print("[orbit-train] saving adapter...")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     trainer.save_model(str(OUTPUT_DIR))
 
-    print("[train] done.")
-    print("[train] adapter saved to:", OUTPUT_DIR)
+    print("[orbit-train] done.")
+    print("[orbit-train] adapter saved to:", OUTPUT_DIR)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ from typing import Dict, Any, Tuple, List
 
 from tqdm import tqdm
 
-from lexica.pipeline.nl_to_ir.schema import (
+from lexica.torque.language.ir.schema import (
     IRModel,
     PrimitiveOp,
     FeatureOp,
@@ -20,12 +20,11 @@ from lexica.pipeline.nl_to_ir.schema import (
     TopologyTarget,
 )
 
-from lexica.pipeline.nl_to_ir.validate import validate_ir
 
-from lexica.irl.ir_to_irl import lower_ir_to_irl
-from lexica.irl.validation import validate_irl
-
-from lexica.cad_engine.executor import IRLExecutor
+from lexica.torque.language.ir.validate import validate_ir
+from lexica.torque.irl.ir_to_irl import lower_ir_to_irl
+from lexica.torque.irl.validation import validate_irl
+from lexica.torque.kernel.executor import IRLExecutor
 
 
 # -----------------------------
