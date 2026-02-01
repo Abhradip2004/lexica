@@ -7,7 +7,7 @@ from typing import Dict, Any, List
 # Path-safe config (works from any cwd)
 # ----------------------------
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))         # .../src/lexica/llm/dataset
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__, ".."))         # .../src/lexica/llm/dataset
 LEXICA_SRC_DIR = os.path.abspath(os.path.join(SCRIPT_DIR))  # .../src/lexica
 
 INPUT_FILE = os.path.join(LEXICA_SRC_DIR, "final_dataset.jsonl")
