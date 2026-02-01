@@ -71,7 +71,7 @@ def tokenize_fn(tokenizer, example):
         example["text"],
         truncation=True,
         max_length=MAX_SEQ_LEN,
-        padding="max_length",  # IMPORTANT for CPU
+        padding=False,  # IMPORTANT for CPU
     )
     tokens["labels"] = tokens["input_ids"]
     return tokens
@@ -131,7 +131,8 @@ def main():
         seed=SEED,
 
         num_train_epochs=5,
-        per_device_train_batch_size=4,      # CPU-friendly
+
+        per_device_train_batch_size=1,
         gradient_accumulation_steps=2,
 
         learning_rate=2e-4,
@@ -141,8 +142,8 @@ def main():
         save_steps=500,
         save_total_limit=2,
 
-        dataloader_num_workers=min(16, CPU_CORES),
-        dataloader_prefetch_factor=4,
+        dataloader_num_workers=2,
+        dataloader_prefetch_factor=2,
 
         report_to="none",
         remove_unused_columns=False,
@@ -152,6 +153,7 @@ def main():
         fp16=False,
         bf16=False,
     )
+
 
     trainer = Trainer(
         model=model,
