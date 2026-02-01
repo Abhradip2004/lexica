@@ -63,7 +63,7 @@ MAX_SEQ_LEN = 512
 
 # Do NOT blindly use all available cores.
 # 12–16 threads is a safe range for EPYC CPU LLM training.
-torch.set_num_threads(16)
+torch.set_num_threads(24)
 torch.set_num_interop_threads(4)
 
 
@@ -188,7 +188,7 @@ def main():
         per_device_train_batch_size=1,
 
         # Gradient accumulation improves efficiency without increasing peak memory.
-        gradient_accumulation_steps=2,
+        gradient_accumulation_steps=3,
 
         learning_rate=2e-4,
         warmup_steps=200,
