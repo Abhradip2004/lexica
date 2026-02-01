@@ -182,6 +182,8 @@ def main():
 
         dataloader_num_workers=4,
         dataloader_pin_memory=False,
+        
+        use_cpu=True,
 
         optim="adamw_torch",
 
