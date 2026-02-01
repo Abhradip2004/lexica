@@ -1,21 +1,26 @@
 import os
 import json
 import random
+from pathlib import Path
 from typing import Dict, Any, List
 
 # ----------------------------
 # Path-safe config (works from any cwd)
 # ----------------------------
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__, ".."))         # .../src/lexica/llm/dataset
-LEXICA_SRC_DIR = os.path.abspath(os.path.join(SCRIPT_DIR))  # .../src/lexica
+# lexica/orbit/dataset/convert_kernel_dataset.py
+SCRIPT_DIR = Path(__file__).resolve()
 
-INPUT_FILE = os.path.join(LEXICA_SRC_DIR, "final_dataset.jsonl")
-SYSTEM_PROMPT_FILE = os.path.join(LEXICA_SRC_DIR, "..", "prompts", "system.txt")
+ORBIT_DIR = SCRIPT_DIR.parents[1]      # lexica/orbit
+LEXICA_DIR = SCRIPT_DIR.parents[2]     # lexica
 
-OUT_DIR = os.path.join(LEXICA_SRC_DIR, "orbit", "dataset")
-TRAIN_OUT = os.path.join(OUT_DIR, "train.jsonl")
-EVAL_OUT = os.path.join(OUT_DIR, "eval.jsonl")
+INPUT_FILE = LEXICA_DIR / "final_dataset.jsonl"
+SYSTEM_PROMPT_FILE = ORBIT_DIR / "prompts" / "system.txt"
+
+OUT_DIR = ORBIT_DIR / "dataset"
+TRAIN_OUT = OUT_DIR / "train.jsonl"
+EVAL_OUT = OUT_DIR / "eval.jsonl"
+
 
 EVAL_RATIO = 0.12
 SEED = 42
