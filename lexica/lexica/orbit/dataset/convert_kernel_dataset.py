@@ -14,7 +14,7 @@ SCRIPT_DIR = Path(__file__).resolve()
 ORBIT_DIR = SCRIPT_DIR.parents[1]      # lexica/orbit
 LEXICA_DIR = SCRIPT_DIR.parents[2]     # lexica
 
-INPUT_FILE = LEXICA_DIR / "final_dataset.jsonl"
+INPUT_FILE = LEXICA_DIR / "orbit" / "dataset" / "final_dataset.jsonl"
 SYSTEM_PROMPT_FILE = ORBIT_DIR / "prompts" / "system.txt"
 
 OUT_DIR = ORBIT_DIR / "dataset"
