@@ -182,7 +182,7 @@ def main():
 
     training_args = TrainingArguments(
         output_dir=str(OUTPUT_DIR),
-        overwrite_output_dir=True,
+        # overwrite_output_dir=True,
         seed=SEED,
 
         num_train_epochs=5,
