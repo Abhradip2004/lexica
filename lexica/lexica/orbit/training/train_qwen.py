@@ -146,7 +146,7 @@ def main():
 
         report_to="none",
         remove_unused_columns=False,
-        evaluation_strategy="steps",
+        eval_strategy="steps",
         eval_steps=200,
 
         fp16=False,
