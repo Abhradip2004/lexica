@@ -1,13 +1,13 @@
 """
-Orbit fine-tuning script (CPU BF16 path, optimized for AMD EPYC 9354P).
+Orbit fine-tuning script (CPU BF16 path)
+Optimized for small VM with 4 vCPUs (KVM/QEMU virtualized EPYC 9354P)
 
 Target:
-Natural Language --> Lexica IR (JSON)
+Natural Language → Lexica IR (JSON)
 
-Hardware target:
-- AMD EPYC 9354P (32 cores/64 threads)
-- CPU-only
-- <= 16 GB RAM
+Hardware reality:
+- 4 logical CPUs visible (no SMT)
+- ~16 GB RAM assumed
 - Transformers v5
 """
 
@@ -26,21 +26,16 @@ from transformers import (
 )
 from peft import LoraConfig, get_peft_model
 
-# Optional: For monitoring CPU/RAM usage (install if needed: pip install psutil)
-import psutil
 
 # -------------------------------------------------------------------
-# CPU threading (optimized for EPYC 9354P)
+# CPU threading — tuned for 4 vCPUs
 # -------------------------------------------------------------------
+# Do NOT use more threads than available vCPUs — causes slowdown
+torch.set_num_threads(4)           # matches available CPUs
+torch.set_num_interop_threads(2)   # small number — avoids contention
 
-import torch.backends
-torch.backends.mkldnn.verbose = torch.backends.mkldnn.verbose.ON
+print(f"[orbit-train] Using {torch.get_num_threads()} intra-op threads, {torch.get_num_interop_threads()} inter-op threads (matched to 4 vCPUs)")
 
-# num_cores = os.cpu_count()  # Should be 64 on your setup
-torch.set_num_threads(32)  # 32 for intra-op (balance compute vs. overhead)
-torch.set_num_interop_threads(8)  # 16 for inter-op
-
-print(f"[orbit-train] Detected {32} logical cores. Set intra-op threads: {torch.get_num_threads()}, inter-op: {torch.get_num_interop_threads()}")
 
 # -------------------------------------------------------------------
 # Paths / constants
@@ -60,6 +55,7 @@ ARTIFACTS_DIR = ORBIT_DIR / "artifacts" / "orbit-ir-v0-lora"
 MAX_SEQ_LEN = 512
 SEED = 1337
 
+
 # -------------------------------------------------------------------
 # Dataset utilities
 # -------------------------------------------------------------------
@@ -71,6 +67,7 @@ def load_jsonl(path: Path) -> list[dict]:
             if line.strip():
                 out.append(json.loads(line))
     return out
+
 
 def build_dataset(path: Path, tokenizer: AutoTokenizer) -> Dataset:
     raw = load_jsonl(path)
@@ -86,15 +83,17 @@ def build_dataset(path: Path, tokenizer: AutoTokenizer) -> Dataset:
 
     return Dataset.from_dict({"text": texts})
 
+
 def tokenize_fn(tokenizer, example):
     tokens = tokenizer(
         example["text"],
         truncation=True,
         max_length=MAX_SEQ_LEN,
-        padding=False,   # dynamic padding via collator
+        padding=False,  # dynamic padding via collator
     )
     tokens["labels"] = tokens["input_ids"]
     return tokens
+
 
 # -------------------------------------------------------------------
 # Main
@@ -103,7 +102,7 @@ def tokenize_fn(tokenizer, example):
 def main():
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
-    print("[orbit-train] BF16 CPU path enabled (optimized for EPYC 9354P)")
+    print("[orbit-train] BF16 CPU fine-tuning (4 vCPU optimized)")
 
     # ---------------- Tokenizer ----------------
 
@@ -117,19 +116,23 @@ def main():
 
     # ---------------- Dataset ----------------
 
+    print("[orbit-train] Loading and tokenizing datasets...")
+
     train_ds = build_dataset(TRAIN_FILE, tokenizer)
     eval_ds = build_dataset(EVAL_FILE, tokenizer)
 
     train_ds = train_ds.map(
         lambda x: tokenize_fn(tokenizer, x),
         remove_columns=["text"],
-        num_proc=16,  # Increased for parallelism
+        num_proc=4,               # match available CPUs
+        desc="Tokenizing train",
     )
 
     eval_ds = eval_ds.map(
         lambda x: tokenize_fn(tokenizer, x),
         remove_columns=["text"],
-        num_proc=16,  # Increased for parallelism
+        num_proc=4,               # match available CPUs
+        desc="Tokenizing eval",
     )
 
     data_collator = DataCollatorForLanguageModeling(
@@ -139,10 +142,13 @@ def main():
 
     # ---------------- Model (BF16 end-to-end) ----------------
 
+    print("[orbit-train] Loading model in bfloat16...")
+
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
-        torch_dtype=torch.bfloat16,   # IMPORTANT
+        torch_dtype=torch.bfloat16,
         trust_remote_code=True,
+        low_cpu_mem_usage=True,      # helps with small RAM
     )
 
     # ---------------- LoRA ----------------
@@ -167,31 +173,37 @@ def main():
 
         num_train_epochs=5,
         per_device_train_batch_size=1,
-        gradient_accumulation_steps=6,
+        gradient_accumulation_steps=6,          # effective batch size = 6
 
         learning_rate=2e-4,
         warmup_ratio=0.03,
-        weight_decay=0.0,
+        weight_decay=0.01,
 
-        logging_steps=50,
+        logging_steps=20,                       # more frequent logging on small setup
+        logging_strategy="steps",
 
         save_steps=500,
         save_total_limit=2,
+        save_strategy="steps",
 
         report_to="none",
         remove_unused_columns=True,
 
         eval_strategy="no",
 
-        dataloader_num_workers=8,  # Increased for better I/O parallelism
-        dataloader_pin_memory=True,  # Enable for faster data transfer (CPU-safe)
-        
-        use_cpu=True,
+        dataloader_num_workers=4,               # match vCPU count
+        dataloader_pin_memory=False,            # usually better off on small VMs
+        dataloader_persistent_workers=True,     # reduces startup overhead
 
+        use_cpu=True,
         optim="adamw_torch",
 
         fp16=False,
-        bf16=True,   # IMPORTANT
+        bf16=True,
+
+        # Memory optimizations
+        gradient_checkpointing=True,            # very important for small RAM
+        torch_compile=False,                    # can be unstable / slow on small VMs
     )
 
     # ---------------- Trainer ----------------
@@ -204,20 +216,19 @@ def main():
         data_collator=data_collator,
     )
 
-    print("[orbit-train] starting training (BF16)...")
+    print("[orbit-train] Starting training (BF16 / 4 vCPUs)...")
     trainer.train()
-
-    # Optional: Log final hardware usage
-    print(f"[orbit-train] CPU usage: {psutil.cpu_percent()}% | RAM usage: {psutil.virtual_memory().percent}%")
 
     # ---------------- Save ----------------
 
+    print("[orbit-train] Training finished. Saving model & tokenizer...")
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     trainer.save_model(str(ARTIFACTS_DIR))
-    tokenizer.save_pretrained(ARTIFACTS_DIR)
+    tokenizer.save_pretrained(str(ARTIFACTS_DIR))
 
-    print("[orbit-train] done.")
-    print("[orbit-train] artifacts saved to:", ARTIFACTS_DIR)
+    print("[orbit-train] Done.")
+    print(f"[orbit-train] Artifacts saved to: {ARTIFACTS_DIR}")
+
 
 if __name__ == "__main__":
     main()
