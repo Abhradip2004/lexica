@@ -198,7 +198,7 @@ def main():
         save_total_limit=2,
 
         # Each DataLoader worker consumes significant RAM.
-        dataloader_num_workers=4,
+        dataloader_num_workers=1,
         dataloader_prefetch_factor=2,
         dataloader_pin_memory=True,
 
