@@ -8,7 +8,7 @@ from typing import Dict, Any, List
 # ----------------------------
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))         # .../src/lexica/llm/dataset
-LEXICA_SRC_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))  # .../src/lexica
+LEXICA_SRC_DIR = os.path.abspath(os.path.join(SCRIPT_DIR))  # .../src/lexica
 
 INPUT_FILE = os.path.join(LEXICA_SRC_DIR, "final_dataset.jsonl")
 SYSTEM_PROMPT_FILE = os.path.join(LEXICA_SRC_DIR, "prompts", "system.txt")
