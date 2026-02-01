@@ -192,7 +192,7 @@ def main():
         eval_strategy="no",
 
         dataloader_num_workers=2,               # match vCPU count
-        dataloader_pin_memory=False,            # usually better off on small VMs
+        dataloader_pin_memory=True,            # usually better off on small VMs
         dataloader_persistent_workers=True,     # reduces startup overhead
 
         use_cpu=True,
