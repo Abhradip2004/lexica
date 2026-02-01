@@ -1,11 +1,11 @@
 """
-Orbit fine-tuning script (CPU BF16 path).
+Orbit fine-tuning script (CPU BF16 path, optimized for AMD EPYC 9354P).
 
 Target:
 Natural Language --> Lexica IR (JSON)
 
 Hardware target:
-- AMD EPYC 9354P
+- AMD EPYC 9354P (32 cores/64 threads)
 - CPU-only
 - <= 16 GB RAM
 - Transformers v5
@@ -26,14 +26,18 @@ from transformers import (
 )
 from peft import LoraConfig, get_peft_model
 
+# Optional: For monitoring CPU/RAM usage (install if needed: pip install psutil)
+import psutil
 
 # -------------------------------------------------------------------
-# CPU threading (critical for EPYC)
+# CPU threading (optimized for EPYC 9354P)
 # -------------------------------------------------------------------
 
-torch.set_num_threads(12)
-torch.set_num_interop_threads(4)
+num_cores = os.cpu_count()  # Should be 64 on your setup
+torch.set_num_threads(num_cores // 2)  # 32 for intra-op (balance compute vs. overhead)
+torch.set_num_interop_threads(num_cores // 4)  # 16 for inter-op
 
+print(f"[orbit-train] Detected {num_cores} logical cores. Set intra-op threads: {torch.get_num_threads()}, inter-op: {torch.get_num_interop_threads()}")
 
 # -------------------------------------------------------------------
 # Paths / constants
@@ -53,7 +57,6 @@ ARTIFACTS_DIR = ORBIT_DIR / "artifacts" / "orbit-ir-v0-lora"
 MAX_SEQ_LEN = 512
 SEED = 1337
 
-
 # -------------------------------------------------------------------
 # Dataset utilities
 # -------------------------------------------------------------------
@@ -65,7 +68,6 @@ def load_jsonl(path: Path) -> list[dict]:
             if line.strip():
                 out.append(json.loads(line))
     return out
-
 
 def build_dataset(path: Path, tokenizer: AutoTokenizer) -> Dataset:
     raw = load_jsonl(path)
@@ -81,7 +83,6 @@ def build_dataset(path: Path, tokenizer: AutoTokenizer) -> Dataset:
 
     return Dataset.from_dict({"text": texts})
 
-
 def tokenize_fn(tokenizer, example):
     tokens = tokenizer(
         example["text"],
@@ -92,7 +93,6 @@ def tokenize_fn(tokenizer, example):
     tokens["labels"] = tokens["input_ids"]
     return tokens
 
-
 # -------------------------------------------------------------------
 # Main
 # -------------------------------------------------------------------
@@ -100,7 +100,7 @@ def tokenize_fn(tokenizer, example):
 def main():
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
-    print("[orbit-train] BF16 CPU path enabled")
+    print("[orbit-train] BF16 CPU path enabled (optimized for EPYC 9354P)")
 
     # ---------------- Tokenizer ----------------
 
@@ -120,13 +120,13 @@ def main():
     train_ds = train_ds.map(
         lambda x: tokenize_fn(tokenizer, x),
         remove_columns=["text"],
-        num_proc=4,
+        num_proc=16,  # Increased for parallelism
     )
 
     eval_ds = eval_ds.map(
         lambda x: tokenize_fn(tokenizer, x),
         remove_columns=["text"],
-        num_proc=4,
+        num_proc=16,  # Increased for parallelism
     )
 
     data_collator = DataCollatorForLanguageModeling(
@@ -180,8 +180,8 @@ def main():
 
         eval_strategy="no",
 
-        dataloader_num_workers=4,
-        dataloader_pin_memory=False,
+        dataloader_num_workers=16,  # Increased for better I/O parallelism
+        dataloader_pin_memory=True,  # Enable for faster data transfer (CPU-safe)
         
         use_cpu=True,
 
@@ -204,6 +204,9 @@ def main():
     print("[orbit-train] starting training (BF16)...")
     trainer.train()
 
+    # Optional: Log final hardware usage
+    print(f"[orbit-train] CPU usage: {psutil.cpu_percent()}% | RAM usage: {psutil.virtual_memory().percent}%")
+
     # ---------------- Save ----------------
 
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -212,7 +215,6 @@ def main():
 
     print("[orbit-train] done.")
     print("[orbit-train] artifacts saved to:", ARTIFACTS_DIR)
-
 
 if __name__ == "__main__":
     main()
