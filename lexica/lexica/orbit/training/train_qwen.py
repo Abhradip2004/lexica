@@ -157,7 +157,7 @@ def main():
         report_to="none",
         eval_strategy="no",
 
-        dataloader_num_workers=0,   # CRITICAL: faster on small CPUs
+        dataloader_num_workers=1,   # CRITICAL: faster on small CPUs
         dataloader_pin_memory=False,
 
         optim="adamw_torch",
