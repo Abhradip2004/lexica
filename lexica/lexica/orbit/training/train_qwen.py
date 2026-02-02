@@ -37,7 +37,7 @@ print(f"[cpu-train] Using {CPU_CORES} CPU threads")
 
 BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent(1)
 DATA_DIR = ROOT / "dataset"
 
 TRAIN_FILE = DATA_DIR / "train.jsonl"
