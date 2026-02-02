@@ -37,11 +37,12 @@ print(f"[cpu-train] Using {CPU_CORES} CPU threads")
 
 BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 
-ROOT = Path(__file__).resolve().parent(1)
-DATA_DIR = ROOT / "dataset"
+ORBIT_ROOT = Path(__file__).resolve().parent.parent
+
+DATA_DIR = ORBIT_ROOT / "dataset"
+OUT_DIR = ORBIT_ROOT / "artifacts" / "orbit-qwen2.5-1.5b-lora"
 
 TRAIN_FILE = DATA_DIR / "train.jsonl"
-OUT_DIR = ROOT / "artifacts" / "orbit-qwen2.5-1b-lora"
 
 MAX_SEQ_LEN = 512
 SEED = 1337
@@ -163,7 +164,7 @@ def main():
         use_cpu=True,
 
         fp16=False,
-        bf16=False,                 # enable only if you KNOW CPU supports it
+        bf16=False,                 # enable if CPU supports it
 
         gradient_checkpointing=True,
         torch_compile=False,
