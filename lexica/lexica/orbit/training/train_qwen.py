@@ -1,16 +1,3 @@
-"""
-Orbit fine-tuning script (CPU BF16 path)
-Optimized for small VM with 4 vCPUs (KVM/QEMU virtualized EPYC 9354P)
-
-Target:
-Natural Language → Lexica IR (JSON)
-
-Hardware reality:
-- 4 logical CPUs visible (no SMT)
-- ~16 GB RAM assumed
-- Transformers v5
-"""
-
 import os
 import json
 from pathlib import Path
@@ -27,53 +14,54 @@ from transformers import (
 from peft import LoraConfig, get_peft_model
 
 
-# -------------------------------------------------------------------
-# CPU threading — tuned for 4 vCPUs
-# -------------------------------------------------------------------
-# Do NOT use more threads than available vCPUs — causes slowdown
-torch.set_num_threads(4)           # matches available CPUs
-torch.set_num_interop_threads(2)   # small number — avoids contention
+# ============================================================
+# HARD CPU LIMITS — DO NOT CHANGE
+# ============================================================
 
-print(f"[orbit-train] Using {torch.get_num_threads()} intra-op threads, {torch.get_num_interop_threads()} inter-op threads (matched to 4 vCPUs)")
+CPU_CORES = 4
+
+torch.set_num_threads(CPU_CORES)
+torch.set_num_interop_threads(1)
+
+os.environ["OMP_NUM_THREADS"] = str(CPU_CORES)
+os.environ["MKL_NUM_THREADS"] = str(CPU_CORES)
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+
+print(f"[cpu-train] Using {CPU_CORES} CPU threads")
 
 
-# -------------------------------------------------------------------
-# Paths / constants
-# -------------------------------------------------------------------
+# ============================================================
+# PATHS / CONSTANTS
+# ============================================================
 
-BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
+BASE_MODEL = "Qwen/Qwen2.5-1B-Instruct"
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-ORBIT_DIR = PROJECT_ROOT / "lexica" / "orbit"
-DATASET_DIR = ORBIT_DIR / "dataset"
+ROOT = Path(__file__).resolve().parent
+DATA_DIR = ROOT / "dataset"
 
-TRAIN_FILE = DATASET_DIR / "train.jsonl"
-EVAL_FILE = DATASET_DIR / "eval.jsonl"
-
-ARTIFACTS_DIR = ORBIT_DIR / "artifacts" / "orbit-ir-v0-lora"
+TRAIN_FILE = DATA_DIR / "train.jsonl"
+OUT_DIR = ROOT / "artifacts" / "orbit-qwen2.5-1b-lora"
 
 MAX_SEQ_LEN = 512
 SEED = 1337
 
 
-# -------------------------------------------------------------------
-# Dataset utilities
-# -------------------------------------------------------------------
+# ============================================================
+# DATASET
+# ============================================================
 
-def load_jsonl(path: Path) -> list[dict]:
-    out = []
+def load_jsonl(path: Path):
     with path.open("r", encoding="utf-8") as f:
         for line in f:
             if line.strip():
-                out.append(json.loads(line))
-    return out
+                yield json.loads(line)
 
 
-def build_dataset(path: Path, tokenizer: AutoTokenizer) -> Dataset:
-    raw = load_jsonl(path)
-
+def build_dataset(path: Path, tokenizer):
     texts = []
-    for ex in raw:
+
+    for ex in load_jsonl(path):
         text = tokenizer.apply_chat_template(
             ex["messages"],
             tokenize=False,
@@ -84,150 +72,120 @@ def build_dataset(path: Path, tokenizer: AutoTokenizer) -> Dataset:
     return Dataset.from_dict({"text": texts})
 
 
-def tokenize_fn(tokenizer, example):
-    tokens = tokenizer(
+def tokenize(example):
+    out = tokenizer(
         example["text"],
         truncation=True,
         max_length=MAX_SEQ_LEN,
-        padding="max_length",
     )
-    tokens["labels"] = tokens["input_ids"]
-    return tokens
+    out["labels"] = out["input_ids"]
+    return out
 
 
-# -------------------------------------------------------------------
-# Main
-# -------------------------------------------------------------------
+# ============================================================
+# MAIN
+# ============================================================
 
 def main():
-    os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+    global tokenizer
 
-    print("[orbit-train] BF16 CPU fine-tuning (4 vCPU optimized)")
-
-    # ---------------- Tokenizer ----------------
-
+    print("[cpu-train] Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(
         BASE_MODEL,
         trust_remote_code=True,
+        use_fast=True,
     )
 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # ---------------- Dataset ----------------
-
-    print("[orbit-train] Loading and tokenizing datasets...")
-
+    print("[cpu-train] Loading dataset...")
     train_ds = build_dataset(TRAIN_FILE, tokenizer)
-    eval_ds = build_dataset(EVAL_FILE, tokenizer)
 
+    print("[cpu-train] Tokenizing (CPU-parallel)...")
     train_ds = train_ds.map(
-        lambda x: tokenize_fn(tokenizer, x),
+        tokenize,
         remove_columns=["text"],
-        num_proc=4,               # match available CPUs
-        desc="Tokenizing train",
+        num_proc=CPU_CORES,
+        desc="Tokenizing",
     )
 
-    eval_ds = eval_ds.map(
-        lambda x: tokenize_fn(tokenizer, x),
-        remove_columns=["text"],
-        num_proc=4,               # match available CPUs
-        desc="Tokenizing eval",
-    )
-
-    data_collator = DataCollatorForLanguageModeling(
+    collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
         mlm=False,
     )
 
-    # ---------------- Model (BF16 end-to-end) ----------------
-
-    print("[orbit-train] Loading model in bfloat16...")
-
+    print("[cpu-train] Loading model (fp32 CPU)...")
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
-        torch_dtype=torch.bfloat16,
         trust_remote_code=True,
-        low_cpu_mem_usage=True,      # helps with small RAM
+        torch_dtype=torch.float32,   # fp32 is safer on generic CPUs
+        low_cpu_mem_usage=True,
+        device_map=None,
     )
 
-    # ---------------- LoRA ----------------
-
-    lora_cfg = LoraConfig(
-        r=16,
-        lora_alpha=32,
+    print("[cpu-train] Applying LoRA...")
+    lora = LoraConfig(
+        r=8,
+        lora_alpha=16,
         target_modules=["q_proj", "v_proj"],
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
     )
 
-    model = get_peft_model(model, lora_cfg)
+    model = get_peft_model(model, lora)
     model.print_trainable_parameters()
 
-    # ---------------- Training arguments ----------------
-
-    training_args = TrainingArguments(
-        output_dir=str(ARTIFACTS_DIR),
+    args = TrainingArguments(
+        output_dir=str(OUT_DIR),
         seed=SEED,
 
-        num_train_epochs=5,
-        per_device_train_batch_size=8,
-        gradient_accumulation_steps=16,          # effective batch size = 6
+        num_train_epochs=3,
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=32,   # effective batch = 32
 
         learning_rate=2e-4,
         warmup_ratio=0.03,
         weight_decay=0.01,
 
-        logging_steps=20,                       # more frequent logging on small setup
-        logging_strategy="steps",
-
+        logging_steps=25,
         save_steps=500,
         save_total_limit=2,
-        save_strategy="steps",
 
         report_to="none",
-        remove_unused_columns=True,
+        evaluation_strategy="no",
 
-        eval_strategy="no",
+        dataloader_num_workers=0,   # CRITICAL: faster on small CPUs
+        dataloader_pin_memory=False,
 
-        dataloader_num_workers=2,               # match vCPU count
-        dataloader_pin_memory=False,            # usually better off on small VMs
-        dataloader_persistent_workers=True,     # reduces startup overhead
-
-        use_cpu=True,
         optim="adamw_torch",
+        use_cpu=True,
 
         fp16=False,
-        bf16=True,
+        bf16=False,                 # enable only if you KNOW CPU supports it
 
-        # Memory optimizations
-        gradient_checkpointing=True,            # very important for small RAM
-        torch_compile=False,                    # can be unstable / slow on small VMs
+        gradient_checkpointing=True,
+        torch_compile=False,
+        remove_unused_columns=True,
     )
-
-    # ---------------- Trainer ----------------
 
     trainer = Trainer(
         model=model,
-        args=training_args,
+        args=args,
         train_dataset=train_ds,
-        eval_dataset=eval_ds,
-        data_collator=data_collator,
+        data_collator=collator,
     )
 
-    print("[orbit-train] Starting training (BF16 / 4 vCPUs)...")
+    print("[cpu-train] Starting training...")
     trainer.train()
 
-    # ---------------- Save ----------------
+    print("[cpu-train] Saving artifacts...")
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    trainer.save_model(str(OUT_DIR))
+    tokenizer.save_pretrained(str(OUT_DIR))
 
-    print("[orbit-train] Training finished. Saving model & tokenizer...")
-    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-    trainer.save_model(str(ARTIFACTS_DIR))
-    tokenizer.save_pretrained(str(ARTIFACTS_DIR))
-
-    print("[orbit-train] Done.")
-    print(f"[orbit-train] Artifacts saved to: {ARTIFACTS_DIR}")
+    print("[cpu-train] Done.")
 
 
 if __name__ == "__main__":
