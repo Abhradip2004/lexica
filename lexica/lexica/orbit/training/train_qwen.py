@@ -9,13 +9,12 @@ from transformers import (
     AutoModelForCausalLM,
     TrainingArguments,
     Trainer,
-    DataCollatorForLanguageModeling,
 )
 from peft import LoraConfig, get_peft_model
 
 
 # ============================================================
-# CPU CONFIGURATION (HARD LIMITS)
+# CPU CONFIG (4 vCPU VPS)
 # ============================================================
 
 CPU_CORES = 4
@@ -32,7 +31,7 @@ print(f"[cpu-train] Using {CPU_CORES} CPU threads")
 
 
 # ============================================================
-# PATHS / CONSTANTS
+# PATHS
 # orbit/
 # ├── dataset/
 # ├── train/train_qwen.py
@@ -52,19 +51,18 @@ SEED = 1337
 
 
 # ============================================================
-# DATASET UTILITIES
+# DATASET
 # ============================================================
 
-def load_jsonl(path: Path):
-    with path.open("r", encoding="utf-8") as f:
+def load_jsonl(path):
+    with open(path, "r", encoding="utf-8") as f:
         for line in f:
             if line.strip():
                 yield json.loads(line)
 
 
-def build_dataset(path: Path, tokenizer):
+def build_dataset(path, tokenizer):
     texts = []
-
     for ex in load_jsonl(path):
         text = tokenizer.apply_chat_template(
             ex["messages"],
@@ -72,18 +70,17 @@ def build_dataset(path: Path, tokenizer):
             add_generation_prompt=False,
         )
         texts.append(text)
-
     return Dataset.from_dict({"text": texts})
 
 
 def tokenize_fn(example, tokenizer):
-    tokens = tokenizer(
+    out = tokenizer(
         example["text"],
         truncation=True,
         max_length=MAX_SEQ_LEN,
     )
-    tokens["labels"] = tokens["input_ids"]
-    return tokens
+    out["labels"] = out["input_ids"]
+    return out
 
 
 # ============================================================
@@ -91,7 +88,6 @@ def tokenize_fn(example, tokenizer):
 # ============================================================
 
 def main():
-    # ---------------- Sanity checks ----------------
     assert TRAIN_FILE.exists(), f"Missing dataset file: {TRAIN_FILE}"
 
     # ---------------- Tokenizer ----------------
@@ -109,20 +105,27 @@ def main():
     print("[cpu-train] Loading dataset...")
     train_ds = build_dataset(TRAIN_FILE, tokenizer)
 
-    print("[cpu-train] Tokenizing (parallel, no padding)...")
+    print("[cpu-train] Tokenizing...")
     train_ds = train_ds.map(
         lambda x: tokenize_fn(x, tokenizer),
         remove_columns=["text"],
         num_proc=CPU_CORES,
-        desc="Tokenizing",
     )
 
-    # ---------------- Data collator (DYNAMIC padding) ----------------
-    data_collator = DataCollatorForLanguageModeling(
-        tokenizer=tokenizer,
-        mlm=False,
-        pad_to_multiple_of=8,   # important for BF16 kernels
-    )
+    # ---------------- Custom collator (FIXED) ----------------
+    def causal_lm_collator(features):
+        batch = tokenizer.pad(
+            features,
+            padding=True,
+            pad_to_multiple_of=8,
+            return_tensors="pt",
+        )
+
+        labels = batch["labels"].clone()
+        labels[batch["attention_mask"] == 0] = -100
+        batch["labels"] = labels
+
+        return batch
 
     # ---------------- Model ----------------
     print("[cpu-train] Loading model (BF16, CPU)...")
@@ -135,7 +138,7 @@ def main():
 
     # ---------------- LoRA ----------------
     print("[cpu-train] Applying LoRA...")
-    lora_config = LoraConfig(
+    lora = LoraConfig(
         r=4,
         lora_alpha=8,
         target_modules=["q_proj", "v_proj"],
@@ -144,17 +147,17 @@ def main():
         task_type="CAUSAL_LM",
     )
 
-    model = get_peft_model(model, lora_config)
+    model = get_peft_model(model, lora)
     model.print_trainable_parameters()
 
-    # ---------------- Training arguments ----------------
+    # ---------------- Training args ----------------
     args = TrainingArguments(
         output_dir=str(ARTIFACTS_DIR),
         seed=SEED,
 
         num_train_epochs=3,
         per_device_train_batch_size=2,
-        gradient_accumulation_steps=16,   # effective batch = 32
+        gradient_accumulation_steps=16,
 
         learning_rate=2e-4,
         warmup_ratio=0.03,
@@ -167,7 +170,7 @@ def main():
         report_to="none",
         eval_strategy="no",
 
-        dataloader_num_workers=1,   # faster on small VPS
+        dataloader_num_workers=0,
         dataloader_pin_memory=False,
 
         optim="adamw_torch",
@@ -186,7 +189,7 @@ def main():
         model=model,
         args=args,
         train_dataset=train_ds,
-        data_collator=data_collator,
+        data_collator=causal_lm_collator,
     )
 
     # ---------------- Train ----------------
