@@ -116,27 +116,38 @@ def main():
 
     # ---------------- Custom collator (CORRECT & FINAL) ----------------
     def causal_lm_collator(features):
-        # 1. Extract labels
-        labels = [f.pop("labels") for f in features]
+        # Extract fields
+        input_ids = [f["input_ids"] for f in features]
+        attention_masks = [f["attention_mask"] for f in features]
+        labels = [f["labels"] for f in features]
 
-        # 2. Pad tokenizer-managed fields
-        batch = tokenizer(
-            features,
-            padding=True,
-            truncation=True,
-            pad_to_multiple_of=8,
-            return_tensors="pt",
-        )
+        # Find max length in batch
+        max_len = max(len(x) for x in input_ids)
 
-        # 3. Pad labels manually with -100
-        max_len = batch["input_ids"].size(1)
-        padded_labels = [
-            label + [-100] * (max_len - len(label))
-            for label in labels
-        ]
+        # Pad input_ids, attention_mask, labels
+        padded_input_ids = []
+        padded_attention_masks = []
+        padded_labels = []
 
-        batch["labels"] = torch.tensor(padded_labels, dtype=torch.long)
-        return batch
+        for ids, mask, lbl in zip(input_ids, attention_masks, labels):
+            pad_len = max_len - len(ids)
+
+            padded_input_ids.append(
+                ids + [tokenizer.pad_token_id] * pad_len
+            )
+            padded_attention_masks.append(
+                mask + [0] * pad_len
+            )
+            padded_labels.append(
+                lbl + [-100] * pad_len
+            )
+
+        return {
+            "input_ids": torch.tensor(padded_input_ids, dtype=torch.long),
+            "attention_mask": torch.tensor(padded_attention_masks, dtype=torch.long),
+            "labels": torch.tensor(padded_labels, dtype=torch.long),
+        }
+
 
     # ---------------- Model ----------------
     print("[cpu-train] Loading model (BF16, CPU)...")
