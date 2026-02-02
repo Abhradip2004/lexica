@@ -120,10 +120,10 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         trust_remote_code=True,
-        torch_dtype=torch.float32,   # fp32 is safer on generic CPUs
+        torch_dtype=torch.bfloat16,
         low_cpu_mem_usage=True,
-        device_map=None,
     )
+
 
     print("[cpu-train] Applying LoRA...")
     lora = LoraConfig(
@@ -143,8 +143,8 @@ def main():
         seed=SEED,
 
         num_train_epochs=3,
-        per_device_train_batch_size=1,
-        gradient_accumulation_steps=32,   # effective batch = 32
+        per_device_train_batch_size=2,
+        gradient_accumulation_steps=16,   # effective batch = 32
 
         learning_rate=2e-4,
         warmup_ratio=0.03,
@@ -164,7 +164,7 @@ def main():
         use_cpu=True,
 
         fp16=False,
-        bf16=False,                 # enable if CPU supports it
+        bf16=True,                 # enable if CPU supports it
 
         gradient_checkpointing=True,
         torch_compile=False,
