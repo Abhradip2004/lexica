@@ -179,7 +179,7 @@ def main():
 
         num_train_epochs=3,
         per_device_train_batch_size=1,
-        gradient_accumulation_steps=32,
+        gradient_accumulation_steps=16,
 
         learning_rate=2e-4,
         warmup_ratio=0.03,
