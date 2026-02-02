@@ -47,6 +47,11 @@ TRAIN_FILE = DATA_DIR / "train.jsonl"
 MAX_SEQ_LEN = 512
 SEED = 1337
 
+data_collator = DataCollatorForLanguageModeling(
+    tokenizer=tokenizer,
+    mlm=False,
+    pad_to_multiple_of=8,   # IMPORTANT for BF16 + CPU
+)
 
 # ============================================================
 # DATASET
@@ -175,7 +180,7 @@ def main():
         model=model,
         args=args,
         train_dataset=train_ds,
-        data_collator=collator,
+        data_collator=data_collator,
     )
 
     print("[cpu-train] Starting training...")
