@@ -113,19 +113,31 @@ def main():
     )
 
     # ---------------- Custom collator (FIXED) ----------------
-    def causal_lm_collator(features):
-        batch = tokenizer.pad(
-            features,
-            padding=True,
-            pad_to_multiple_of=8,
-            return_tensors="pt",
-        )
+def causal_lm_collator(features):
+    # 1. Extract labels and remove them from features
+    labels = [f.pop("labels") for f in features]
 
-        labels = batch["labels"].clone()
-        labels[batch["attention_mask"] == 0] = -100
-        batch["labels"] = labels
+    # 2. Pad tokenizer-controlled fields ONLY
+    batch = tokenizer(
+        features,
+        padding=True,
+        truncation=True,
+        pad_to_multiple_of=8,
+        return_tensors="pt",
+    )
 
-        return batch
+    # 3. Manually pad labels to match input_ids
+    max_len = batch["input_ids"].size(1)
+
+    padded_labels = []
+    for label in labels:
+        padded = label + [-100] * (max_len - len(label))
+        padded_labels.append(padded)
+
+    batch["labels"] = torch.tensor(padded_labels, dtype=torch.long)
+
+    return batch
+
 
     # ---------------- Model ----------------
     print("[cpu-train] Loading model (BF16, CPU)...")
@@ -170,7 +182,7 @@ def main():
         report_to="none",
         eval_strategy="no",
 
-        dataloader_num_workers=0,
+        dataloader_num_workers=1,
         dataloader_pin_memory=False,
 
         optim="adamw_torch",
