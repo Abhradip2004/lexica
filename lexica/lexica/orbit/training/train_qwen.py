@@ -165,7 +165,7 @@ def main():
         save_total_limit=2,
 
         report_to="none",
-        evaluation_strategy="no",
+        eval_strategy="no",
 
         dataloader_num_workers=1,   # faster on small VPS
         dataloader_pin_memory=False,
