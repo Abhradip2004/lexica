@@ -15,7 +15,7 @@ from peft import LoraConfig, get_peft_model
 
 
 # ============================================================
-# HARD CPU LIMITS — DO NOT CHANGE
+# HARD CPU LIMITS 
 # ============================================================
 
 CPU_CORES = 4
@@ -35,7 +35,7 @@ print(f"[cpu-train] Using {CPU_CORES} CPU threads")
 # PATHS / CONSTANTS
 # ============================================================
 
-BASE_MODEL = "Qwen/Qwen2.5-1B-Instruct"
+BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "dataset"
@@ -126,13 +126,13 @@ def main():
 
     print("[cpu-train] Applying LoRA...")
     lora = LoraConfig(
-        r=8,
-        lora_alpha=16,
-        target_modules=["q_proj", "v_proj"],
-        lora_dropout=0.05,
-        bias="none",
-        task_type="CAUSAL_LM",
-    )
+            r=4,
+            lora_alpha=8,
+            target_modules=["q_proj", "v_proj"],
+            lora_dropout=0.05,
+            bias="none",
+            task_type="CAUSAL_LM",
+        )
 
     model = get_peft_model(model, lora)
     model.print_trainable_parameters()
