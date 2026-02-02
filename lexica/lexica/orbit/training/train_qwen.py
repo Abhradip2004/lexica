@@ -14,7 +14,7 @@ from peft import LoraConfig, get_peft_model
 
 
 # ============================================================
-# CPU CONFIG (4 vCPU VPS)
+# CPU CONFIG (4 vCPU VPS / laptop safe)
 # ============================================================
 
 CPU_CORES = 4
@@ -34,8 +34,10 @@ print(f"[cpu-train] Using {CPU_CORES} CPU threads")
 # PATHS
 # orbit/
 # ├── dataset/
-# ├── train/train_qwen.py
-# ├── artifacts/
+# │   └── train.jsonl
+# ├── train/
+# │   └── train_qwen.py  ← this file
+# └── artifacts/
 # ============================================================
 
 BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
@@ -51,17 +53,17 @@ SEED = 1337
 
 
 # ============================================================
-# DATASET
+# DATASET UTILITIES
 # ============================================================
 
-def load_jsonl(path):
-    with open(path, "r", encoding="utf-8") as f:
+def load_jsonl(path: Path):
+    with path.open("r", encoding="utf-8") as f:
         for line in f:
             if line.strip():
                 yield json.loads(line)
 
 
-def build_dataset(path, tokenizer):
+def build_dataset(path: Path, tokenizer):
     texts = []
     for ex in load_jsonl(path):
         text = tokenizer.apply_chat_template(
@@ -74,13 +76,13 @@ def build_dataset(path, tokenizer):
 
 
 def tokenize_fn(example, tokenizer):
-    out = tokenizer(
+    tokens = tokenizer(
         example["text"],
         truncation=True,
         max_length=MAX_SEQ_LEN,
     )
-    out["labels"] = out["input_ids"]
-    return out
+    tokens["labels"] = tokens["input_ids"]
+    return tokens
 
 
 # ============================================================
@@ -112,32 +114,29 @@ def main():
         num_proc=CPU_CORES,
     )
 
-    # ---------------- Custom collator (FIXED) ----------------
-def causal_lm_collator(features):
-    # 1. Extract labels and remove them from features
-    labels = [f.pop("labels") for f in features]
+    # ---------------- Custom collator (CORRECT & FINAL) ----------------
+    def causal_lm_collator(features):
+        # 1. Extract labels
+        labels = [f.pop("labels") for f in features]
 
-    # 2. Pad tokenizer-controlled fields ONLY
-    batch = tokenizer(
-        features,
-        padding=True,
-        truncation=True,
-        pad_to_multiple_of=8,
-        return_tensors="pt",
-    )
+        # 2. Pad tokenizer-managed fields
+        batch = tokenizer(
+            features,
+            padding=True,
+            truncation=True,
+            pad_to_multiple_of=8,
+            return_tensors="pt",
+        )
 
-    # 3. Manually pad labels to match input_ids
-    max_len = batch["input_ids"].size(1)
+        # 3. Pad labels manually with -100
+        max_len = batch["input_ids"].size(1)
+        padded_labels = [
+            label + [-100] * (max_len - len(label))
+            for label in labels
+        ]
 
-    padded_labels = []
-    for label in labels:
-        padded = label + [-100] * (max_len - len(label))
-        padded_labels.append(padded)
-
-    batch["labels"] = torch.tensor(padded_labels, dtype=torch.long)
-
-    return batch
-
+        batch["labels"] = torch.tensor(padded_labels, dtype=torch.long)
+        return batch
 
     # ---------------- Model ----------------
     print("[cpu-train] Loading model (BF16, CPU)...")
@@ -150,26 +149,26 @@ def causal_lm_collator(features):
 
     # ---------------- LoRA ----------------
     print("[cpu-train] Applying LoRA...")
-    lora = LoraConfig(
-        r=4,
-        lora_alpha=8,
+    lora_config = LoraConfig(
+        r=2,                 # safe for 16 GB RAM
+        lora_alpha=4,
         target_modules=["q_proj", "v_proj"],
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
     )
 
-    model = get_peft_model(model, lora)
+    model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
 
-    # ---------------- Training args ----------------
+    # ---------------- Training arguments ----------------
     args = TrainingArguments(
         output_dir=str(ARTIFACTS_DIR),
         seed=SEED,
 
         num_train_epochs=3,
-        per_device_train_batch_size=2,
-        gradient_accumulation_steps=16,
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=32,
 
         learning_rate=2e-4,
         warmup_ratio=0.03,
@@ -182,7 +181,7 @@ def causal_lm_collator(features):
         report_to="none",
         eval_strategy="no",
 
-        dataloader_num_workers=1,
+        dataloader_num_workers=0,
         dataloader_pin_memory=False,
 
         optim="adamw_torch",
