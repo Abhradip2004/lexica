@@ -15,7 +15,7 @@ from peft import LoraConfig, get_peft_model
 
 
 # ============================================================
-# HARD CPU LIMITS 
+# CPU CONFIGURATION (HARD LIMITS)
 # ============================================================
 
 CPU_CORES = 4
@@ -33,28 +33,26 @@ print(f"[cpu-train] Using {CPU_CORES} CPU threads")
 
 # ============================================================
 # PATHS / CONSTANTS
+# orbit/
+# ├── dataset/
+# ├── train/train_qwen.py
+# ├── artifacts/
 # ============================================================
 
 BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 
 ORBIT_ROOT = Path(__file__).resolve().parent.parent
+DATASET_DIR = ORBIT_ROOT / "dataset"
+ARTIFACTS_DIR = ORBIT_ROOT / "artifacts" / "orbit-qwen2.5-1.5b-lora"
 
-DATA_DIR = ORBIT_ROOT / "dataset"
-OUT_DIR = ORBIT_ROOT / "artifacts" / "orbit-qwen2.5-1.5b-lora"
-
-TRAIN_FILE = DATA_DIR / "train.jsonl"
+TRAIN_FILE = DATASET_DIR / "train.jsonl"
 
 MAX_SEQ_LEN = 512
 SEED = 1337
 
-data_collator = DataCollatorForLanguageModeling(
-    tokenizer=tokenizer,
-    mlm=False,
-    pad_to_multiple_of=8,   # IMPORTANT for BF16 + CPU
-)
 
 # ============================================================
-# DATASET
+# DATASET UTILITIES
 # ============================================================
 
 def load_jsonl(path: Path):
@@ -78,14 +76,14 @@ def build_dataset(path: Path, tokenizer):
     return Dataset.from_dict({"text": texts})
 
 
-def tokenize(example):
-    out = tokenizer(
+def tokenize_fn(example, tokenizer):
+    tokens = tokenizer(
         example["text"],
         truncation=True,
         max_length=MAX_SEQ_LEN,
     )
-    out["labels"] = out["input_ids"]
-    return out
+    tokens["labels"] = tokens["input_ids"]
+    return tokens
 
 
 # ============================================================
@@ -93,8 +91,10 @@ def tokenize(example):
 # ============================================================
 
 def main():
-    global tokenizer
+    # ---------------- Sanity checks ----------------
+    assert TRAIN_FILE.exists(), f"Missing dataset file: {TRAIN_FILE}"
 
+    # ---------------- Tokenizer ----------------
     print("[cpu-train] Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(
         BASE_MODEL,
@@ -105,23 +105,27 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    # ---------------- Dataset ----------------
     print("[cpu-train] Loading dataset...")
     train_ds = build_dataset(TRAIN_FILE, tokenizer)
 
-    print("[cpu-train] Tokenizing (CPU-parallel)...")
+    print("[cpu-train] Tokenizing (parallel, no padding)...")
     train_ds = train_ds.map(
-        tokenize,
+        lambda x: tokenize_fn(x, tokenizer),
         remove_columns=["text"],
         num_proc=CPU_CORES,
         desc="Tokenizing",
     )
 
-    collator = DataCollatorForLanguageModeling(
+    # ---------------- Data collator (DYNAMIC padding) ----------------
+    data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
         mlm=False,
+        pad_to_multiple_of=8,   # important for BF16 kernels
     )
 
-    print("[cpu-train] Loading model (fp32 CPU)...")
+    # ---------------- Model ----------------
+    print("[cpu-train] Loading model (BF16, CPU)...")
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         trust_remote_code=True,
@@ -129,22 +133,23 @@ def main():
         low_cpu_mem_usage=True,
     )
 
-
+    # ---------------- LoRA ----------------
     print("[cpu-train] Applying LoRA...")
-    lora = LoraConfig(
-            r=4,
-            lora_alpha=8,
-            target_modules=["q_proj", "v_proj"],
-            lora_dropout=0.05,
-            bias="none",
-            task_type="CAUSAL_LM",
-        )
+    lora_config = LoraConfig(
+        r=4,
+        lora_alpha=8,
+        target_modules=["q_proj", "v_proj"],
+        lora_dropout=0.05,
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
 
-    model = get_peft_model(model, lora)
+    model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
 
+    # ---------------- Training arguments ----------------
     args = TrainingArguments(
-        output_dir=str(OUT_DIR),
+        output_dir=str(ARTIFACTS_DIR),
         seed=SEED,
 
         num_train_epochs=3,
@@ -160,22 +165,23 @@ def main():
         save_total_limit=2,
 
         report_to="none",
-        eval_strategy="no",
+        evaluation_strategy="no",
 
-        dataloader_num_workers=1,   # CRITICAL: faster on small CPUs
+        dataloader_num_workers=1,   # faster on small VPS
         dataloader_pin_memory=False,
 
         optim="adamw_torch",
         use_cpu=True,
 
+        bf16=True,
         fp16=False,
-        bf16=True,                 # enable if CPU supports it
 
         gradient_checkpointing=True,
         torch_compile=False,
         remove_unused_columns=True,
     )
 
+    # ---------------- Trainer ----------------
     trainer = Trainer(
         model=model,
         args=args,
@@ -183,13 +189,15 @@ def main():
         data_collator=data_collator,
     )
 
+    # ---------------- Train ----------------
     print("[cpu-train] Starting training...")
     trainer.train()
 
+    # ---------------- Save ----------------
     print("[cpu-train] Saving artifacts...")
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    trainer.save_model(str(OUT_DIR))
-    tokenizer.save_pretrained(str(OUT_DIR))
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    trainer.save_model(str(ARTIFACTS_DIR))
+    tokenizer.save_pretrained(str(ARTIFACTS_DIR))
 
     print("[cpu-train] Done.")
 
