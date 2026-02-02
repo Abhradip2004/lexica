@@ -155,7 +155,7 @@ def main():
         save_total_limit=2,
 
         report_to="none",
-        evaluation_strategy="no",
+        eval_strategy="no",
 
         dataloader_num_workers=0,   # CRITICAL: faster on small CPUs
         dataloader_pin_memory=False,
