@@ -154,7 +154,7 @@ def main():
         output_dir=str(ARTIFACTS_DIR),
         seed=SEED,
 
-        num_train_epochs=6,
+        num_train_epochs=20,
         per_device_train_batch_size=4,
         gradient_accumulation_steps=8,
 
