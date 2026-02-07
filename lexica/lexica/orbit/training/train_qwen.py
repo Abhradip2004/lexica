@@ -22,7 +22,7 @@ from peft import LoraConfig, get_peft_model
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 
-assert torch.cuda.is_available(), "CUDA GPU is required (RTX 3090 expected)"
+assert torch.cuda.is_available(), "CUDA GPU required (RTX 3090)"
 torch.backends.cuda.matmul.allow_tf32 = True
 
 
@@ -66,13 +66,11 @@ def build_dataset(path: Path, tokenizer):
 
 
 def tokenize_fn(example, tokenizer):
-    tokens = tokenizer(
+    return tokenizer(
         example["text"],
         truncation=True,
         max_length=MAX_SEQ_LEN,
     )
-    tokens["labels"] = tokens["input_ids"].copy()
-    return tokens
 
 
 # ============================================================
@@ -102,13 +100,13 @@ def main():
         num_proc=4,
     )
 
-    # ---------------- Data collator ----------------
+    # ---------------- Collator (THIS is the key) ----------------
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
         mlm=False,
     )
 
-    # ---------------- QLoRA config ----------------
+    # ---------------- QLoRA ----------------
     print("[train] Setting up QLoRA...")
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -127,7 +125,7 @@ def main():
     )
 
     model.gradient_checkpointing_enable()
-    model.config.use_cache = False  # REQUIRED for gradient checkpointing
+    model.config.use_cache = False  # REQUIRED
 
     # ---------------- LoRA ----------------
     print("[train] Applying LoRA...")
