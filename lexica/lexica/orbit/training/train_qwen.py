@@ -10,19 +10,20 @@ from transformers import (
     TrainingArguments,
     Trainer,
     BitsAndBytesConfig,
+    DataCollatorForLanguageModeling,
 )
 from peft import LoraConfig, get_peft_model
 
 
 # ============================================================
-# GPU CONFIG (RTX 3090)
+# ENV / GPU CHECK
 # ============================================================
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 
-assert torch.cuda.is_available(), "CUDA is required for this script"
-DEVICE = "cuda"
+assert torch.cuda.is_available(), "CUDA GPU is required (RTX 3090 expected)"
+torch.backends.cuda.matmul.allow_tf32 = True
 
 
 # ============================================================
@@ -82,6 +83,7 @@ def main():
     assert TRAIN_FILE.exists(), f"Missing dataset file: {TRAIN_FILE}"
 
     # ---------------- Tokenizer ----------------
+    print("[train] Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(
         BASE_MODEL,
         trust_remote_code=True,
@@ -90,14 +92,24 @@ def main():
     tokenizer.pad_token = tokenizer.eos_token
 
     # ---------------- Dataset ----------------
+    print("[train] Loading dataset...")
     train_ds = build_dataset(TRAIN_FILE, tokenizer)
+
+    print("[train] Tokenizing...")
     train_ds = train_ds.map(
         lambda x: tokenize_fn(x, tokenizer),
         remove_columns=["text"],
         num_proc=4,
     )
 
-    # ---------------- QLoRA Quantization ----------------
+    # ---------------- Data collator ----------------
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer,
+        mlm=False,
+    )
+
+    # ---------------- QLoRA config ----------------
+    print("[train] Setting up QLoRA...")
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -106,6 +118,7 @@ def main():
     )
 
     # ---------------- Model ----------------
+    print("[train] Loading model...")
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         quantization_config=bnb_config,
@@ -114,8 +127,10 @@ def main():
     )
 
     model.gradient_checkpointing_enable()
+    model.config.use_cache = False  # REQUIRED for gradient checkpointing
 
     # ---------------- LoRA ----------------
+    print("[train] Applying LoRA...")
     lora_config = LoraConfig(
         r=16,
         lora_alpha=32,
@@ -163,20 +178,25 @@ def main():
         remove_unused_columns=True,
     )
 
+    # ---------------- Trainer ----------------
     trainer = Trainer(
         model=model,
         args=args,
         train_dataset=train_ds,
-        data_collator=None,  # HF handles causal LM padding correctly here
+        data_collator=data_collator,
     )
 
     # ---------------- Train ----------------
+    print("[train] Starting training...")
     trainer.train()
 
     # ---------------- Save ----------------
+    print("[train] Saving artifacts...")
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     trainer.save_model(str(ARTIFACTS_DIR))
     tokenizer.save_pretrained(str(ARTIFACTS_DIR))
+
+    print("[train] Done.")
 
 
 if __name__ == "__main__":
