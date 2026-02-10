@@ -158,13 +158,13 @@ def main():
         per_device_train_batch_size=4,
         gradient_accumulation_steps=8,
 
-        learning_rate=2e-4,
-        warmup_ratio=0.05,
+        learning_rate=1e-4,
+        warmup_ratio=0.03,
         lr_scheduler_type="cosine",
 
-        logging_steps=10,
+        logging_steps=20,
         save_strategy="epoch",
-        save_total_limit=2,
+        save_total_limit=3,
 
         bf16=True,
         fp16=False,
