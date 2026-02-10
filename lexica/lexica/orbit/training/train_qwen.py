@@ -162,7 +162,7 @@ def main():
         warmup_ratio=0.03,
         lr_scheduler_type="cosine",
 
-        logging_steps=20,
+        logging_steps=10,
         save_strategy="epoch",
         save_total_limit=3,
 
